@@ -738,9 +738,21 @@ begin
       SrcPixel := PBgraPixel(AImage.Scanline[Y]);
       for X := 0 to W - 1 do
       begin
-        PixelRGBA[0] := SrcPixel^.R;
-        PixelRGBA[1] := SrcPixel^.G;
-        PixelRGBA[2] := SrcPixel^.B;
+        if AImage.IsPremultiplied and (SrcPixel^.A > 0) and (SrcPixel^.A < 255) then
+        begin
+          PixelRGBA[0] := (SrcPixel^.R * 255) div SrcPixel^.A;
+          if PixelRGBA[0] > 255 then PixelRGBA[0] := 255;
+          PixelRGBA[1] := (SrcPixel^.G * 255) div SrcPixel^.A;
+          if PixelRGBA[1] > 255 then PixelRGBA[1] := 255;
+          PixelRGBA[2] := (SrcPixel^.B * 255) div SrcPixel^.A;
+          if PixelRGBA[2] > 255 then PixelRGBA[2] := 255;
+        end
+        else
+        begin
+          PixelRGBA[0] := SrcPixel^.R;
+          PixelRGBA[1] := SrcPixel^.G;
+          PixelRGBA[2] := SrcPixel^.B;
+        end;
         PixelRGBA[3] := SrcPixel^.A;
         RawScanlines.WriteBuffer(PixelRGBA[0], 4);
         Inc(SrcPixel);

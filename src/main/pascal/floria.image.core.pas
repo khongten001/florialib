@@ -89,6 +89,7 @@ type
     FPixelFormat : TFloriaPixelFormat;
     FRenderingBuf: rendering_buffer;
     FPixFormat   : pixel_formats;
+    FIsPremultiplied: Boolean;
 
     function GetPixel(const X, Y: Integer): TBgraPixel;
     procedure SetPixel(const X, Y: Integer; const AValue: TBgraPixel);
@@ -108,6 +109,8 @@ type
     function Clone(): TFloriaImage;
     function CreateScaled(const NewW, NewH: Integer; const ABilinear: Boolean = True): TFloriaImage;
     procedure CopyFrom(ASource: TFloriaImage; const SrcX, SrcY, DstX, DstY, W, H: Integer);
+    procedure PremultiplyAlpha();
+    procedure DemultiplyAlpha();
 
     function PixFormatPtr(): pixel_formats_ptr;
     function RenderingBufPtr(): rendering_buffer_ptr;
@@ -124,6 +127,7 @@ type
     property PixelBuffer : Pointer            read FPixelBuffer;
     property Data        : Pointer            read FPixelBuffer;
     property PixelFormat : TFloriaPixelFormat read FPixelFormat;
+    property IsPremultiplied: Boolean         read FIsPremultiplied write FIsPremultiplied;
     property Pixels[const X, Y: Integer]: TBgraPixel read GetPixel write SetPixel;
     property Scanline[const Y: Integer]: Pointer     read GetScanline;
   end;
@@ -316,6 +320,7 @@ begin
   if FWidth < 0 then FWidth := 0;
   if FHeight < 0 then FHeight := 0;
   FPixelFormat := AFormat;
+  FIsPremultiplied := False;
 
   case FPixelFormat of
     fpfBGRA32, fpfRGBA32:
@@ -417,6 +422,7 @@ begin
   Result := TFloriaImage.Create(FWidth, FHeight, FPixelFormat);
   if (FPixelBuffer <> nil) and (Result.PixelBuffer <> nil) then
     Move(FPixelBuffer^, Result.PixelBuffer^, FHeight * FStride);
+  Result.IsPremultiplied := FIsPremultiplied;
 end;
 
 function TFloriaImage.CreateScaled(const NewW, NewH: Integer; const ABilinear: Boolean = True): TFloriaImage;
@@ -438,6 +444,7 @@ begin
 
   Result := TFloriaImage.Create(NewW, NewH, FPixelFormat);
   if (Result.PixelBuffer = nil) then Exit;
+  Result.IsPremultiplied := FIsPremultiplied;
 
   if ABilinear and (FPixelFormat = fpfBGRA32) and (NewW > 1) and (NewH > 1) and (FWidth > 1) and (FHeight > 1) then
   begin
@@ -532,6 +539,68 @@ begin
     DstRow := PByte(GetScanline(DstY + Row)) + DstX * 4;
     Move(SrcRow^, DstRow^, ActualW * 4);
   end;
+end;
+
+procedure TFloriaImage.PremultiplyAlpha();
+var
+  P: PBgraPixel;
+  TotalPixels, I: Integer;
+  a: Byte;
+begin
+  if FIsPremultiplied or (FPixelFormat <> fpfBGRA32) or (FPixelBuffer = nil) then Exit;
+  P := PBgraPixel(FPixelBuffer);
+  TotalPixels := FWidth * FHeight;
+  for I := 0 to TotalPixels - 1 do
+  begin
+    a := P^.A;
+    if a = 0 then
+    begin
+      P^.B := 0;
+      P^.G := 0;
+      P^.R := 0;
+    end
+    else if a < 255 then
+    begin
+      P^.B := (P^.B * a + 128) shr 8;
+      P^.G := (P^.G * a + 128) shr 8;
+      P^.R := (P^.R * a + 128) shr 8;
+    end;
+    Inc(P);
+  end;
+  FIsPremultiplied := True;
+end;
+
+procedure TFloriaImage.DemultiplyAlpha();
+var
+  P: PBgraPixel;
+  TotalPixels, I: Integer;
+  a: Byte;
+  b, g, r: Integer;
+begin
+  if not FIsPremultiplied or (FPixelFormat <> fpfBGRA32) or (FPixelBuffer = nil) then Exit;
+  P := PBgraPixel(FPixelBuffer);
+  TotalPixels := FWidth * FHeight;
+  for I := 0 to TotalPixels - 1 do
+  begin
+    a := P^.A;
+    if a = 0 then
+    begin
+      P^.B := 0;
+      P^.G := 0;
+      P^.R := 0;
+    end
+    else if a < 255 then
+    begin
+      b := (P^.B * 255) div a; if b > 255 then b := 255;
+      g := (P^.G * 255) div a; if g > 255 then g := 255;
+      r := (P^.R * 255) div a; if r > 255 then r := 255;
+      P^.B := b;
+      P^.G := g;
+      P^.R := r;
+    end;
+    Inc(P);
+  end;
+  FIsPremultiplied := False;
 end;
 
 procedure TFloriaImage.LoadFromFile(const AFileName: string);

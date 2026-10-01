@@ -20,6 +20,7 @@ type
     procedure TestAlphaStack();
     procedure TestHersheyText();
     procedure TestSVGRasterizer();
+    procedure TestDrawImagePremultipliedAlpha();
   end;
 
 implementation
@@ -300,6 +301,51 @@ begin
     AssertEquals('Outside rect Alpha is 0', 0, Pix.A);
   finally
     Img.Free();
+  end;
+end;
+
+procedure TFloriaCanvasAggTest.TestDrawImagePremultipliedAlpha();
+var
+  DestImg, SrcImg: TFloriaImage;
+  Canvas: TFloriaCanvasAgg;
+  Pix: TBgraPixel;
+begin
+  DestImg := TFloriaImage.Create(40, 40);
+  SrcImg := TFloriaImage.Create(20, 20);
+  try
+    // Pure white background
+    DestImg.Clear(255, 255, 255, 255);
+
+    // Semi-transparent white source image: in straight alpha (255, 255, 255, 128)
+    // in premultiplied alpha: (128, 128, 128, 128)
+    SrcImg.Clear(255, 255, 255, 128);
+    SrcImg.PremultiplyAlpha();
+    AssertTrue('SrcImg is premultiplied', SrcImg.IsPremultiplied);
+
+    Canvas := TFloriaCanvasAgg.Create(DestImg);
+    try
+      Canvas.DrawImage(10.0, 10.0, SrcImg, 1.0);
+
+      // Blending 50% white over 100% white MUST result in pure white (254-255),
+      // NEVER dark gray/dirty fringe (which was 190 with double alpha multiplication)!
+      Pix := DestImg.Pixels[15, 15];
+      AssertTrue('No dark fringe Red on white background', Pix.R >= 254);
+      AssertTrue('No dark fringe Green on white background', Pix.G >= 254);
+      AssertTrue('No dark fringe Blue on white background', Pix.B >= 254);
+      AssertEquals('Result Alpha is 255', 255, Pix.A);
+
+      // Also test DrawImageScaled
+      Canvas.DrawImageScaled(0.0, 0.0, 40.0, 40.0, SrcImg, 1.0);
+      Pix := DestImg.Pixels[2, 2];
+      AssertTrue('Scaled PMA Red on white background', Pix.R >= 254);
+      AssertTrue('Scaled PMA Green on white background', Pix.G >= 254);
+      AssertTrue('Scaled PMA Blue on white background', Pix.B >= 254);
+    finally
+      Canvas.Free();
+    end;
+  finally
+    DestImg.Free();
+    SrcImg.Free();
   end;
 end;
 

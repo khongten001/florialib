@@ -30,6 +30,7 @@ type
     procedure TestFormatAutoDetection();
     procedure TestJPEGMarkerDetection();
     procedure TestInvalidStreamHandling();
+    procedure TestPremultipliedAlpha();
   end;
 
 implementation
@@ -398,6 +399,60 @@ begin
   finally
     Img.Free();
     MS.Free();
+  end;
+end;
+
+procedure TFloriaImageTest.TestPremultipliedAlpha();
+var
+  Img: TFloriaImage;
+  Pix: TBgraPixel;
+begin
+  Img := TFloriaImage.Create(2, 2);
+  try
+    AssertFalse('Default IsPremultiplied is False', Img.IsPremultiplied);
+
+    // Set a semi-transparent pixel (R=200, G=100, B=50, A=128)
+    Img.Pixels[0, 0] := TBgraPixel.Create(200, 100, 50, 128);
+    // Set a fully transparent pixel (R=255, G=255, B=255, A=0)
+    Img.Pixels[1, 0] := TBgraPixel.Create(255, 255, 255, 0);
+    // Set an opaque pixel (R=200, G=100, B=50, A=255)
+    Img.Pixels[0, 1] := TBgraPixel.Create(200, 100, 50, 255);
+
+    Img.PremultiplyAlpha();
+    AssertTrue('IsPremultiplied after PremultiplyAlpha is True', Img.IsPremultiplied);
+
+    // Semi-transparent pixel: color channels should be scaled by alpha / 256
+    Pix := Img.Pixels[0, 0];
+    AssertEquals('Premultiplied Alpha channel', 128, Pix.A);
+    AssertTrue('Premultiplied Red ~ 100', Abs(Pix.R - 100) <= 2);
+    AssertTrue('Premultiplied Green ~ 50', Abs(Pix.G - 50) <= 2);
+    AssertTrue('Premultiplied Blue ~ 25', Abs(Pix.B - 25) <= 2);
+
+    // Fully transparent pixel: RGB must be 0
+    Pix := Img.Pixels[1, 0];
+    AssertEquals('Transparent Red is 0', 0, Pix.R);
+    AssertEquals('Transparent Green is 0', 0, Pix.G);
+    AssertEquals('Transparent Blue is 0', 0, Pix.B);
+    AssertEquals('Transparent Alpha is 0', 0, Pix.A);
+
+    // Opaque pixel: unchanged
+    Pix := Img.Pixels[0, 1];
+    AssertEquals('Opaque Red unchanged', 200, Pix.R);
+    AssertEquals('Opaque Green unchanged', 100, Pix.G);
+    AssertEquals('Opaque Blue unchanged', 50, Pix.B);
+    AssertEquals('Opaque Alpha unchanged', 255, Pix.A);
+
+    // Demultiply alpha
+    Img.DemultiplyAlpha();
+    AssertFalse('IsPremultiplied after DemultiplyAlpha is False', Img.IsPremultiplied);
+
+    Pix := Img.Pixels[0, 0];
+    AssertTrue('Demultiplied Red restored ~ 200', Abs(Pix.R - 200) <= 2);
+    AssertTrue('Demultiplied Green restored ~ 100', Abs(Pix.G - 100) <= 2);
+    AssertTrue('Demultiplied Blue restored ~ 50', Abs(Pix.B - 50) <= 2);
+    AssertEquals('Demultiplied Alpha', 128, Pix.A);
+  finally
+    Img.Free();
   end;
 end;
 

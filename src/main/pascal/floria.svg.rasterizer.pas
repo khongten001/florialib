@@ -49,14 +49,14 @@ type
     class procedure RenderString(ACanvas: TFloriaCanvasAgg; const ASVGContent: string; X, Y, W, H: Double); static;
     class procedure RenderFile(ACanvas: TFloriaCanvasAgg; const AFileName: string; X, Y, W, H: Double); static;
 
-    class function RenderToImage(ADoc: TSVGDocument; AWidth: Integer = 0; AHeight: Integer = 0): TFloriaImage; static;
-    class function RenderStringToImage(const ASVGContent: string; AWidth: Integer = 0; AHeight: Integer = 0): TFloriaImage; static;
-    class function RenderFileToImage(const AFileName: string; AWidth: Integer = 0; AHeight: Integer = 0): TFloriaImage; static;
+    class function RenderToImage(ADoc: TSVGDocument; AWidth: Integer = 0; AHeight: Integer = 0; ASupersample: Boolean = False): TFloriaImage; static;
+    class function RenderStringToImage(const ASVGContent: string; AWidth: Integer = 0; AHeight: Integer = 0; ASupersample: Boolean = False): TFloriaImage; static;
+    class function RenderFileToImage(const AFileName: string; AWidth: Integer = 0; AHeight: Integer = 0; ASupersample: Boolean = False): TFloriaImage; static;
 
     // Backward-compatibility aliases
-    class function RenderToBitmap(ADoc: TSVGDocument; AWidth: Integer = 0; AHeight: Integer = 0): TFloriaImage; static;
-    class function RenderStringToBitmap(const ASVGContent: string; AWidth: Integer = 0; AHeight: Integer = 0): TFloriaImage; static;
-    class function RenderFileToBitmap(const AFileName: string; AWidth: Integer = 0; AHeight: Integer = 0): TFloriaImage; static;
+    class function RenderToBitmap(ADoc: TSVGDocument; AWidth: Integer = 0; AHeight: Integer = 0; ASupersample: Boolean = False): TFloriaImage; static;
+    class function RenderStringToBitmap(const ASVGContent: string; AWidth: Integer = 0; AHeight: Integer = 0; ASupersample: Boolean = False): TFloriaImage; static;
+    class function RenderFileToBitmap(const AFileName: string; AWidth: Integer = 0; AHeight: Integer = 0; ASupersample: Boolean = False): TFloriaImage; static;
   end;
 
   // Backward-compatibility alias
@@ -123,10 +123,12 @@ begin
   end;
 end;
 
-class function TFloriaSVGRenderer.RenderToImage(ADoc: TSVGDocument; AWidth: Integer = 0; AHeight: Integer = 0): TFloriaImage;
+class function TFloriaSVGRenderer.RenderToImage(ADoc: TSVGDocument; AWidth: Integer; AHeight: Integer; ASupersample: Boolean): TFloriaImage;
 var
   targetW, targetH: Integer;
   canvas: TFloriaCanvasAgg;
+  hiW, hiH: Integer;
+  hiImg, scaledImg: TFloriaImage;
 begin
   if not Assigned(ADoc) or not Assigned(ADoc.Root) then
     Exit(TFloriaImage.Create(0, 0));
@@ -141,6 +143,27 @@ begin
     targetH := 100;
   end;
 
+  if ASupersample and Assigned(ADoc.Root) and ADoc.Root.ViewBox.HasValue and (targetW <= 64) and (targetH <= 64) then
+  begin
+    hiW := targetW * 2;
+    hiH := targetH * 2;
+    hiImg := TFloriaImage.Create(hiW, hiH);
+    hiImg.Clear(0, 0, 0, 0);
+    canvas := TFloriaCanvasAgg.Create(hiImg.PixelBuffer, hiImg.Width, hiImg.Height);
+    try
+      Render(canvas, ADoc, 0.0, 0.0, hiW, hiH);
+    finally
+      canvas.Free();
+    end;
+    hiImg.IsPremultiplied := True;
+
+    scaledImg := hiImg.CreateScaled(targetW, targetH, True);
+    scaledImg.IsPremultiplied := True;
+    hiImg.Free();
+    Result := scaledImg;
+    Exit;
+  end;
+
   Result := TFloriaImage.Create(targetW, targetH);
   Result.Clear(0, 0, 0, 0);
 
@@ -150,45 +173,46 @@ begin
   finally
     canvas.Free();
   end;
+  Result.IsPremultiplied := True;
 end;
 
-class function TFloriaSVGRenderer.RenderStringToImage(const ASVGContent: string; AWidth: Integer = 0; AHeight: Integer = 0): TFloriaImage;
+class function TFloriaSVGRenderer.RenderStringToImage(const ASVGContent: string; AWidth: Integer; AHeight: Integer; ASupersample: Boolean): TFloriaImage;
 var
   doc: TSVGDocument;
 begin
   doc := TSVGParser.ParseString(ASVGContent);
   try
-    Result := RenderToImage(doc, AWidth, AHeight);
+    Result := RenderToImage(doc, AWidth, AHeight, ASupersample);
   finally
     doc.Free();
   end;
 end;
 
-class function TFloriaSVGRenderer.RenderFileToImage(const AFileName: string; AWidth: Integer = 0; AHeight: Integer = 0): TFloriaImage;
+class function TFloriaSVGRenderer.RenderFileToImage(const AFileName: string; AWidth: Integer; AHeight: Integer; ASupersample: Boolean): TFloriaImage;
 var
   doc: TSVGDocument;
 begin
   doc := TSVGParser.ParseFile(AFileName);
   try
-    Result := RenderToImage(doc, AWidth, AHeight);
+    Result := RenderToImage(doc, AWidth, AHeight, ASupersample);
   finally
     doc.Free();
   end;
 end;
 
-class function TFloriaSVGRenderer.RenderToBitmap(ADoc: TSVGDocument; AWidth: Integer = 0; AHeight: Integer = 0): TFloriaImage;
+class function TFloriaSVGRenderer.RenderToBitmap(ADoc: TSVGDocument; AWidth: Integer; AHeight: Integer; ASupersample: Boolean): TFloriaImage;
 begin
-  Result := RenderToImage(ADoc, AWidth, AHeight);
+  Result := RenderToImage(ADoc, AWidth, AHeight, ASupersample);
 end;
 
-class function TFloriaSVGRenderer.RenderStringToBitmap(const ASVGContent: string; AWidth: Integer = 0; AHeight: Integer = 0): TFloriaImage;
+class function TFloriaSVGRenderer.RenderStringToBitmap(const ASVGContent: string; AWidth: Integer; AHeight: Integer; ASupersample: Boolean): TFloriaImage;
 begin
-  Result := RenderStringToImage(ASVGContent, AWidth, AHeight);
+  Result := RenderStringToImage(ASVGContent, AWidth, AHeight, ASupersample);
 end;
 
-class function TFloriaSVGRenderer.RenderFileToBitmap(const AFileName: string; AWidth: Integer = 0; AHeight: Integer = 0): TFloriaImage;
+class function TFloriaSVGRenderer.RenderFileToBitmap(const AFileName: string; AWidth: Integer; AHeight: Integer; ASupersample: Boolean): TFloriaImage;
 begin
-  Result := RenderFileToImage(AFileName, AWidth, AHeight);
+  Result := RenderFileToImage(AFileName, AWidth, AHeight, ASupersample);
 end;
 
 class procedure TFloriaSVGRenderer.RenderElement(ACanvas: TFloriaCanvasAgg; ADoc: TSVGDocument; AElem: TSVGElement; const AMatrix: TSVGMatrix; Depth: Integer = 0);

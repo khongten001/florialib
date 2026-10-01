@@ -945,6 +945,17 @@ var
   cover: int8u;
   dstX, dstY: Integer;
   effOpacity: Double;
+  clip: rect_ptr;
+  minX, maxX, minY, maxY: Integer;
+  dx, dy: Integer;
+  srcX0, srcY: Integer;
+  srcPixels, dstPixels: PByte;
+  srcRow, dstRow: PByte;
+  srcStride, dstStride: Integer;
+  b, g, r, a: Integer;
+  invA, dstB, dstG, dstR, dstA: Integer;
+  globalAlpha: Integer;
+  nb, ng, nr, na: Integer;
 begin
   if not Assigned(AImage) or (AImage.Width <= 0) or (AImage.Height <= 0) or (AImage.PixelBuffer = nil) then Exit;
   effOpacity := AOpacity * FCurrentAlpha;
@@ -953,12 +964,105 @@ begin
   dstX := Round(X);
   dstY := Round(Y);
 
-  if effOpacity >= 1.0 then
-    cover := 255
-  else
-    cover := Round(effOpacity * 255.0);
+  if not AImage.IsPremultiplied then
+  begin
+    if effOpacity >= 1.0 then
+      cover := 255
+    else
+      cover := Round(effOpacity * 255.0);
+    FRendererBase.blend_from(AImage.PixFormatPtr(), nil, dstX, dstY, cover);
+    Exit;
+  end;
 
-  FRendererBase.blend_from(AImage.PixFormatPtr(), nil, dstX, dstY, cover);
+  // Premultiplied alpha blending path
+  clip := FRendererBase._clip_box();
+  minX := dstX;
+  if minX < clip^.x1 then minX := clip^.x1;
+  if minX < 0 then minX := 0;
+
+  maxX := dstX + AImage.Width - 1;
+  if maxX > clip^.x2 then maxX := clip^.x2;
+  if maxX >= FWidth then maxX := FWidth - 1;
+
+  minY := dstY;
+  if minY < clip^.y1 then minY := clip^.y1;
+  if minY < 0 then minY := 0;
+
+  maxY := dstY + AImage.Height - 1;
+  if maxY > clip^.y2 then maxY := clip^.y2;
+  if maxY >= FHeight then maxY := FHeight - 1;
+
+  if (minX > maxX) or (minY > maxY) then Exit;
+
+  if effOpacity >= 1.0 then
+    globalAlpha := 255
+  else
+    globalAlpha := Round(effOpacity * 255.0);
+
+  srcStride := AImage.Stride;
+  dstStride := FWidth * 4;
+  srcPixels := PByte(AImage.PixelBuffer);
+  dstPixels := PByte(FBuffer);
+  srcX0 := minX - dstX;
+
+  for dy := minY to maxY do
+  begin
+    srcY := dy - dstY;
+    srcRow := srcPixels + srcY * srcStride + srcX0 * 4;
+    dstRow := dstPixels + dy * dstStride + minX * 4;
+
+    for dx := minX to maxX do
+    begin
+      a := srcRow[3];
+      if a > 0 then
+      begin
+        b := srcRow[0];
+        g := srcRow[1];
+        r := srcRow[2];
+
+        if globalAlpha < 255 then
+        begin
+          b := (b * globalAlpha) shr 8;
+          g := (g * globalAlpha) shr 8;
+          r := (r * globalAlpha) shr 8;
+          a := (a * globalAlpha) shr 8;
+        end;
+
+        if a >= 255 then
+        begin
+          dstRow[0] := b;
+          dstRow[1] := g;
+          dstRow[2] := r;
+          dstRow[3] := 255;
+        end
+        else
+        begin
+          invA := 255 - a;
+          dstB := dstRow[0];
+          dstG := dstRow[1];
+          dstR := dstRow[2];
+          dstA := dstRow[3];
+
+          nb := b + ((dstB * invA + 128) shr 8);
+          if nb > 255 then nb := 255;
+          ng := g + ((dstG * invA + 128) shr 8);
+          if ng > 255 then ng := 255;
+          nr := r + ((dstR * invA + 128) shr 8);
+          if nr > 255 then nr := 255;
+          na := a + ((dstA * invA + 128) shr 8);
+          if na > 255 then na := 255;
+
+          dstRow[0] := nb;
+          dstRow[1] := ng;
+          dstRow[2] := nr;
+          dstRow[3] := na;
+        end;
+      end;
+
+      Inc(srcRow, 4);
+      Inc(dstRow, 4);
+    end;
+  end;
 end;
 
 procedure TFloriaCanvasAgg.DrawImagePart(X, Y, W, H: Double; AImage: TFloriaImage; SrcX, SrcY, SrcW, SrcH: Integer; AOpacity: Double = 1.0);
@@ -967,7 +1071,6 @@ var
   clip: rect_ptr;
   minX, maxX, minY, maxY: Integer;
   dx, dy: Integer;
-  stepX_fp, stepY_fp: Int64;
   curSrcY_fp, curSrcX_fp: Int64;
   sx, sy: Integer;
   fx, fy, invFx, invFy: Integer;
@@ -979,6 +1082,7 @@ var
   globalAlpha: Integer;
   srcX0_fp, srcY0_fp: Int64;
   effOpacity: Double;
+  nb, ng, nr: Integer;
 begin
   if not Assigned(AImage) or (AImage.Width <= 0) or (AImage.Height <= 0) or (AImage.PixelBuffer = nil) then Exit;
   effOpacity := AOpacity * FCurrentAlpha;
@@ -1016,8 +1120,6 @@ begin
   else
     globalAlpha := Round(effOpacity * 255.0);
 
-  stepX_fp := (Int64(SrcW) shl 16) div dstW;
-  stepY_fp := (Int64(SrcH) shl 16) div dstH;
   srcX0_fp := Int64(SrcX) shl 16;
   srcY0_fp := Int64(SrcY) shl 16;
 
@@ -1028,26 +1130,48 @@ begin
 
   for dy := minY to maxY do
   begin
-    curSrcY_fp := srcY0_fp + Int64(dy - dstY) * stepY_fp;
+    curSrcY_fp := srcY0_fp + (((Int64(dy - dstY) * 2 + 1) * Int64(SrcH) shl 15) div dstH) - (1 shl 15);
+    if curSrcY_fp < srcY0_fp then curSrcY_fp := srcY0_fp;
     sy := curSrcY_fp shr 16;
     fy := (curSrcY_fp shr 8) and $FF;
-    invFy := 255 - fy;
+    invFy := 256 - fy;
 
-    if sy < 0 then sy := 0;
-    if sy >= AImage.Height - 1 then sy := AImage.Height - 2;
+    if sy >= SrcY + SrcH - 1 then
+    begin
+      sy := SrcY + SrcH - 2;
+      fy := 255;
+      invFy := 1;
+    end;
+    if sy >= AImage.Height - 1 then
+    begin
+      sy := AImage.Height - 2;
+      fy := 255;
+      invFy := 1;
+    end;
     if sy < 0 then sy := 0;
 
     dstRow := dstPixels + dy * dstStride + minX * 4;
 
     for dx := minX to maxX do
     begin
-      curSrcX_fp := srcX0_fp + Int64(dx - dstX) * stepX_fp;
+      curSrcX_fp := srcX0_fp + (((Int64(dx - dstX) * 2 + 1) * Int64(SrcW) shl 15) div dstW) - (1 shl 15);
+      if curSrcX_fp < srcX0_fp then curSrcX_fp := srcX0_fp;
       sx := curSrcX_fp shr 16;
       fx := (curSrcX_fp shr 8) and $FF;
-      invFx := 255 - fx;
+      invFx := 256 - fx;
 
-      if sx < 0 then sx := 0;
-      if sx >= AImage.Width - 1 then sx := AImage.Width - 2;
+      if sx >= SrcX + SrcW - 1 then
+      begin
+        sx := SrcX + SrcW - 2;
+        fx := 255;
+        invFx := 1;
+      end;
+      if sx >= AImage.Width - 1 then
+      begin
+        sx := AImage.Width - 2;
+        fx := 255;
+        invFx := 1;
+      end;
       if sx < 0 then sx := 0;
 
       p00 := srcPixels + sy * srcStride + sx * 4;
@@ -1061,7 +1185,15 @@ begin
       a := (p00[3] * invFx * invFy + p10[3] * fx * invFy + p01[3] * invFx * fy + p11[3] * fx * fy) shr 16;
 
       if globalAlpha < 255 then
+      begin
+        if AImage.IsPremultiplied then
+        begin
+          b := (b * globalAlpha) shr 8;
+          g := (g * globalAlpha) shr 8;
+          r := (r * globalAlpha) shr 8;
+        end;
         a := (a * globalAlpha) shr 8;
+      end;
 
       if a > 0 then
       begin
@@ -1080,9 +1212,24 @@ begin
           dstR := dstRow[2];
           dstA := dstRow[3];
 
-          dstRow[0] := (b * a + dstB * invA) shr 8;
-          dstRow[1] := (g * a + dstG * invA) shr 8;
-          dstRow[2] := (r * a + dstR * invA) shr 8;
+          if AImage.IsPremultiplied then
+          begin
+            nb := b + ((dstB * invA + 128) shr 8);
+            if nb > 255 then nb := 255;
+            ng := g + ((dstG * invA + 128) shr 8);
+            if ng > 255 then ng := 255;
+            nr := r + ((dstR * invA + 128) shr 8);
+            if nr > 255 then nr := 255;
+            dstRow[0] := nb;
+            dstRow[1] := ng;
+            dstRow[2] := nr;
+          end
+          else
+          begin
+            dstRow[0] := (b * a + dstB * invA) shr 8;
+            dstRow[1] := (g * a + dstG * invA) shr 8;
+            dstRow[2] := (r * a + dstR * invA) shr 8;
+          end;
           finalA := a + ((dstA * invA) shr 8);
           if finalA > 255 then finalA := 255;
           dstRow[3] := finalA;
