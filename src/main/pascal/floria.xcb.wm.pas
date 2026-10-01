@@ -257,9 +257,9 @@ type
     procedure UnparentClient(const AClient: TXCBWMClient);
 
     // Interactive dragging helpers
-    procedure BeginDrag(const AClient: TXCBWMClient; const AMode: TXCBDragMode; const ARootX, ARootY: Integer);
-    procedure UpdateDrag(const ARootX, ARootY: Integer);
-    procedure EndDrag();
+    procedure BeginDrag(const AClient: TXCBWMClient; const AMode: TXCBDragMode; const ARootX, ARootY: Integer); virtual;
+    procedure UpdateDrag(const ARootX, ARootY: Integer); virtual;
+    procedure EndDrag(); virtual;
 
     property Connection        : Pxcb_connection_t   read FConn;
     property Screen            : Pxcb_screen_t       read FScreen;
