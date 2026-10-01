@@ -20,7 +20,8 @@ uses
   Floria.Image.Blur.Test,
   Floria.Canvas.Agg.Test,
   Floria.Unicode.BiDi.Test,
-  Floria.Text.HarfBuzz.Test;
+  Floria.Text.HarfBuzz.Test,
+  Floria.EGL.Test;
 
 var
   Application: TTestRunner;

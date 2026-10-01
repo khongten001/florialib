@@ -177,6 +177,10 @@
         <Filename Value="floria.text.harfbuzz.pas"/>
         <UnitName Value="Floria.Text.HarfBuzz"/>
       </Item>
+      <Item>
+        <Filename Value="floria.egl.pas"/>
+        <UnitName Value="Floria.EGL"/>
+      </Item>
     </Files>
     <RequiredPkgs>
       <Item>
