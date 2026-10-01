@@ -47,6 +47,7 @@ type
     FFrameWindow    : xcb_window_t;
     FPixmap         : xcb_pixmap_t;
     FDamage         : xcb_damage_damage_t;
+    FFrameDamage    : xcb_damage_damage_t;
     FGeometry       : TXCBRect;
     FOpacity        : Single;
     FShadowConfig   : TXCBWindowShadowConfig;
@@ -103,6 +104,8 @@ type
     FCompositeMinor        : Cardinal;
     FDamageMajor           : Cardinal;
     FDamageMinor           : Cardinal;
+    FDamageEventBase       : Byte;
+    FDamageErrorBase       : Byte;
     FScreenWidth           : Integer;
     FScreenHeight          : Integer;
     FWindows               : TObjectList;
@@ -132,6 +135,8 @@ type
     function FindWindow(const AWindow: xcb_window_t): TXCBCompositedWindow;
 
     function HandleDamageNotify(const AEvent: Pxcb_damage_notify_event_t): Boolean;
+    function IsDamageNotify(const AEvent: Pxcb_generic_event_t): Boolean;
+    function HandleGenericEvent(const AEvent: Pxcb_generic_event_t): Boolean;
     procedure CompositeScene();
     procedure PresentToScreen(const ATargetDrawable: xcb_drawable_t = 0);
 
@@ -148,6 +153,7 @@ type
     property IsActive       : Boolean                 read FIsActive;
     property HasComposite   : Boolean                 read FHasComposite;
     property HasDamage      : Boolean                 read FHasDamage;
+    property DamageEventBase: Byte                    read FDamageEventBase;
     property ScreenWidth    : Integer                 read FScreenWidth write FScreenWidth;
     property ScreenHeight   : Integer                 read FScreenHeight write FScreenHeight;
     property Windows        : TObjectList             read FWindows;
@@ -203,6 +209,7 @@ begin
   FHasAlphaChannel := False;
   FPixmap := 0;
   FDamage := 0;
+  FFrameDamage := 0;
   FImage := nil;
 
   if (FCompositor <> nil) and (FCompositor.Connection <> nil) and (FWindow <> 0) then
@@ -210,6 +217,12 @@ begin
     // Create Damage tracking object
     FDamage := xcb_generate_id(FCompositor.Connection);
     xcb_damage_create(FCompositor.Connection, FDamage, FWindow, XCB_DAMAGE_REPORT_LEVEL_NON_EMPTY);
+
+    if (FFrameWindow <> 0) and (FFrameWindow <> FWindow) then
+    begin
+      FFrameDamage := xcb_generate_id(FCompositor.Connection);
+      xcb_damage_create(FCompositor.Connection, FFrameDamage, FFrameWindow, XCB_DAMAGE_REPORT_LEVEL_NON_EMPTY);
+    end;
 
     // Create named window pixmap
     UpdatePixmap();
@@ -220,6 +233,11 @@ destructor TXCBCompositedWindow.Destroy();
 begin
   if (FCompositor <> nil) and (FCompositor.Connection <> nil) then
   begin
+    if FFrameDamage <> 0 then
+    begin
+      xcb_damage_destroy(FCompositor.Connection, FFrameDamage);
+      FFrameDamage := 0;
+    end;
     if FDamage <> 0 then
     begin
       xcb_damage_destroy(FCompositor.Connection, FDamage);
@@ -326,8 +344,13 @@ end;
 
 procedure TXCBCompositedWindow.ClearDamage();
 begin
-  if (FCompositor <> nil) and (FCompositor.Connection <> nil) and (FDamage <> 0) then
-    xcb_damage_subtract(FCompositor.Connection, FDamage, 0, 0);
+  if (FCompositor <> nil) and (FCompositor.Connection <> nil) then
+  begin
+    if FDamage <> 0 then
+      xcb_damage_subtract(FCompositor.Connection, FDamage, 0, 0);
+    if FFrameDamage <> 0 then
+      xcb_damage_subtract(FCompositor.Connection, FFrameDamage, 0, 0);
+  end;
   FIsDirty := False;
 end;
 
@@ -409,6 +432,7 @@ var
   compReply: Pxcb_composite_query_version_reply_t;
   dmgCookie: xcb_damage_query_version_cookie_t;
   dmgReply: Pxcb_damage_query_version_reply_t;
+  extReply: Pxcb_query_extension_reply_t;
 begin
   Result := False;
   if FConn = nil then Exit;
@@ -433,6 +457,13 @@ begin
     FDamageMajor := dmgReply^.major_version;
     FDamageMinor := dmgReply^.minor_version;
     xcb_free(dmgReply);
+
+    extReply := xcb_get_extension_data(FConn, @xcb_damage_id);
+    if (extReply <> nil) and (extReply^.present <> 0) then
+    begin
+      FDamageEventBase := extReply^.first_event;
+      FDamageErrorBase := extReply^.first_error;
+    end;
   end;
 
   Result := FHasComposite and FHasDamage;
@@ -556,6 +587,20 @@ begin
     w.MarkDamaged();
     Result := True;
   end;
+end;
+
+function TXCBCompositor.IsDamageNotify(const AEvent: Pxcb_generic_event_t): Boolean;
+begin
+  Result := False;
+  if (AEvent = nil) or not FHasDamage then Exit;
+  Result := ((AEvent^.response_type and $7F) = FDamageEventBase + XCB_DAMAGE_NOTIFY);
+end;
+
+function TXCBCompositor.HandleGenericEvent(const AEvent: Pxcb_generic_event_t): Boolean;
+begin
+  Result := False;
+  if IsDamageNotify(AEvent) then
+    Result := HandleDamageNotify(Pxcb_damage_notify_event_t(AEvent));
 end;
 
 procedure TXCBCompositor.SetWallpaper(const AImage: TFloriaImage);

@@ -244,7 +244,7 @@ type
     function FindClientByClientWindow(const AWindow: xcb_window_t): TXCBWMClient;
     function FindClientByFrameWindow(const AWindow: xcb_window_t): TXCBWMClient;
 
-    function ProcessEvent(const AEvent: Pxcb_generic_event_t): Boolean;
+    function ProcessEvent(const AEvent: Pxcb_generic_event_t): Boolean; virtual;
     procedure Run();
     procedure Stop();
 
