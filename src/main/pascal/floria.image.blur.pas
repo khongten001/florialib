@@ -77,6 +77,8 @@ var
   w00, w10, w01, w11: Integer;
   origB, origG, origR, origA: Byte;
   curIdx: Integer;
+  invD, iRad: Integer;
+  dstPix: PBgraPixel;
 begin
   if (buf = nil) or (bufWidth <= 0) or (bufHeight <= 0) or (rw <= 2) or (rh <= 2) or (blurRadius < 0.5) then Exit;
 
@@ -133,7 +135,8 @@ begin
       end;
     end;
 
-    // 2. Multi-pass separable box blur on small grid
+    // 2. Multi-pass separable box blur on small grid with fixed-point multiply
+    invD := (1 shl 16) div D;
     for p := 1 to 2 do
     begin
       // Horizontal pass: smallBuf -> tempBuf
@@ -149,7 +152,10 @@ begin
         end;
         for x := 0 to dw - 1 do
         begin
-          dstRow[x].B := sumB div D; dstRow[x].G := sumG div D; dstRow[x].R := sumR div D; dstRow[x].A := sumA div D;
+          dstRow[x].B := (sumB * invD) shr 16;
+          dstRow[x].G := (sumG * invD) shr 16;
+          dstRow[x].R := (sumR * invD) shr 16;
+          dstRow[x].A := (sumA * invD) shr 16;
           entering := Clamp(x + rSmall + 1, 0, dw - 1);
           leaving := Clamp(x - rSmall, 0, dw - 1);
           Inc(sumB, srcRow[entering].B - srcRow[leaving].B);
@@ -170,7 +176,10 @@ begin
         end;
         for y := 0 to dh - 1 do
         begin
-          smallBuf[y * dw + x].B := sumB div D; smallBuf[y * dw + x].G := sumG div D; smallBuf[y * dw + x].R := sumR div D; smallBuf[y * dw + x].A := sumA div D;
+          smallBuf[y * dw + x].B := (sumB * invD) shr 16;
+          smallBuf[y * dw + x].G := (sumG * invD) shr 16;
+          smallBuf[y * dw + x].R := (sumR * invD) shr 16;
+          smallBuf[y * dw + x].A := (sumA * invD) shr 16;
           entering := Clamp(y + rSmall + 1, 0, dh - 1);
           leaving := Clamp(y - rSmall, 0, dh - 1);
           Inc(sumB, tempBuf[entering * dw + x].B - tempBuf[leaving * dw + x].B);
@@ -186,6 +195,7 @@ begin
     if rad < 0.0 then rad := 0.0;
     maxDistSq := rad * rad;
     minDistSq := Sqr(Max(0.0, rad - 1.0));
+    iRad := Round(rad);
 
     for y := 0 to rh - 1 do
     begin
@@ -199,82 +209,125 @@ begin
       r0 := @smallBuf[y0 * dw];
       r1 := @smallBuf[y1 * dw];
 
-      for x := 0 to rw - 1 do
+      // Fast middle band (no corners possible)
+      if (rad <= 0.5) or ((y >= iRad) and (y < rh - iRad)) then
       begin
-        isOutside := False;
-        isEdge := False;
-        alphaFrac := 1.0;
-
-        if rad > 0.5 then
+        dstPix := @pixels[(ry + y) * bufWidth + rx];
+        for x := 0 to rw - 1 do
         begin
-          distSq := 0.0;
+          invWx := 256 - cols[x].wx;
+          w00 := (invWy * invWx) shr 8;
+          w10 := (invWy * cols[x].wx) shr 8;
+          w01 := (wy * invWx) shr 8;
+          w11 := (wy * cols[x].wx) shr 8;
+
+          c00 := r0[cols[x].x0];
+          c10 := r0[cols[x].x1];
+          c01 := r1[cols[x].x0];
+          c11 := r1[cols[x].x1];
+
+          dstPix^.B := (c00.B * w00 + c10.B * w10 + c01.B * w01 + c11.B * w11) shr 8;
+          dstPix^.G := (c00.G * w00 + c10.G * w10 + c01.G * w01 + c11.G * w11) shr 8;
+          dstPix^.R := (c00.R * w00 + c10.R * w10 + c01.R * w01 + c11.R * w11) shr 8;
+          dstPix^.A := (c00.A * w00 + c10.A * w10 + c01.A * w01 + c11.A * w11) shr 8;
+          Inc(dstPix);
+        end;
+      end
+      else
+      begin
+        // Corner band: evaluate rounded corner distance only when necessary
+        for x := 0 to rw - 1 do
+        begin
+          isOutside := False;
+          isEdge := False;
+          alphaFrac := 1.0;
+
           if (x < rad) and (y < rad) then
           begin
             cornerDx := rad - x - 0.5; cornerDy := rad - y - 0.5;
             distSq := cornerDx * cornerDx + cornerDy * cornerDy;
+            if distSq > maxDistSq then isOutside := True
+            else if distSq > minDistSq then
+            begin
+              isEdge := True;
+              dist := Sqrt(distSq);
+              alphaFrac := Max(0.0, Min(1.0, rad - dist));
+            end;
           end
           else if (x >= rw - rad) and (y < rad) then
           begin
             cornerDx := x - (rw - rad) + 0.5; cornerDy := rad - y - 0.5;
             distSq := cornerDx * cornerDx + cornerDy * cornerDy;
+            if distSq > maxDistSq then isOutside := True
+            else if distSq > minDistSq then
+            begin
+              isEdge := True;
+              dist := Sqrt(distSq);
+              alphaFrac := Max(0.0, Min(1.0, rad - dist));
+            end;
           end
           else if (x < rad) and (y >= rh - rad) then
           begin
             cornerDx := rad - x - 0.5; cornerDy := y - (rh - rad) + 0.5;
             distSq := cornerDx * cornerDx + cornerDy * cornerDy;
+            if distSq > maxDistSq then isOutside := True
+            else if distSq > minDistSq then
+            begin
+              isEdge := True;
+              dist := Sqrt(distSq);
+              alphaFrac := Max(0.0, Min(1.0, rad - dist));
+            end;
           end
           else if (x >= rw - rad) and (y >= rh - rad) then
           begin
             cornerDx := x - (rw - rad) + 0.5; cornerDy := y - (rh - rad) + 0.5;
             distSq := cornerDx * cornerDx + cornerDy * cornerDy;
-          end;
-
-          if distSq > maxDistSq then
-            isOutside := True
-          else if distSq > minDistSq then
-          begin
-            isEdge := True;
-            dist := Sqrt(distSq);
-            alphaFrac := Max(0.0, Min(1.0, rad - dist));
+            if distSq > maxDistSq then isOutside := True
+            else if distSq > minDistSq then
+            begin
+              isEdge := True;
+              dist := Sqrt(distSq);
+              alphaFrac := Max(0.0, Min(1.0, rad - dist));
+            end;
           end;
 
           if isOutside then Continue;
-        end;
 
-        invWx := 256 - cols[x].wx;
-        w00 := (invWy * invWx) shr 8;
-        w10 := (invWy * cols[x].wx) shr 8;
-        w01 := (wy * invWx) shr 8;
-        w11 := (wy * cols[x].wx) shr 8;
+          invWx := 256 - cols[x].wx;
+          w00 := (invWy * invWx) shr 8;
+          w10 := (invWy * cols[x].wx) shr 8;
+          w01 := (wy * invWx) shr 8;
+          w11 := (wy * cols[x].wx) shr 8;
 
-        c00 := r0[cols[x].x0];
-        c10 := r0[cols[x].x1];
-        c01 := r1[cols[x].x0];
-        c11 := r1[cols[x].x1];
+          c00 := r0[cols[x].x0];
+          c10 := r0[cols[x].x1];
+          c01 := r1[cols[x].x0];
+          c11 := r1[cols[x].x1];
 
-        interpB := (c00.B * w00 + c10.B * w10 + c01.B * w01 + c11.B * w11) shr 8;
-        interpG := (c00.G * w00 + c10.G * w10 + c01.G * w01 + c11.G * w11) shr 8;
-        interpR := (c00.R * w00 + c10.R * w10 + c01.R * w01 + c11.R * w11) shr 8;
-        interpA := (c00.A * w00 + c10.A * w10 + c01.A * w01 + c11.A * w11) shr 8;
+          interpB := (c00.B * w00 + c10.B * w10 + c01.B * w01 + c11.B * w11) shr 8;
+          interpG := (c00.G * w00 + c10.G * w10 + c01.G * w01 + c11.G * w11) shr 8;
+          interpR := (c00.R * w00 + c10.R * w10 + c01.R * w01 + c11.R * w11) shr 8;
+          interpA := (c00.A * w00 + c10.A * w10 + c01.A * w01 + c11.A * w11) shr 8;
 
-        curIdx := (ry + y) * bufWidth + (rx + x);
-        if isEdge then
-        begin
-          origB := pixels[curIdx].B;
-          origG := pixels[curIdx].G;
-          origR := pixels[curIdx].R;
-          origA := pixels[curIdx].A;
-          pixels[curIdx].B := Round(interpB * alphaFrac + origB * (1.0 - alphaFrac));
-          pixels[curIdx].G := Round(interpG * alphaFrac + origG * (1.0 - alphaFrac));
-          pixels[curIdx].R := Round(interpR * alphaFrac + origR * (1.0 - alphaFrac));
-          pixels[curIdx].A := Round(interpA * alphaFrac + origA * (1.0 - alphaFrac));
-        end
-        else
-        begin
-          pixels[curIdx].B := interpB;
-          pixels[curIdx].G := interpG;
-          pixels[curIdx].R := interpR;
-          pixels[curIdx].A := interpA;
+          curIdx := (ry + y) * bufWidth + (rx + x);
+          if isEdge then
+          begin
+            origB := pixels[curIdx].B;
+            origG := pixels[curIdx].G;
+            origR := pixels[curIdx].R;
+            origA := pixels[curIdx].A;
+            pixels[curIdx].B := Round(interpB * alphaFrac + origB * (1.0 - alphaFrac));
+            pixels[curIdx].G := Round(interpG * alphaFrac + origG * (1.0 - alphaFrac));
+            pixels[curIdx].R := Round(interpR * alphaFrac + origR * (1.0 - alphaFrac));
+            pixels[curIdx].A := Round(interpA * alphaFrac + origA * (1.0 - alphaFrac));
+          end
+          else
+          begin
+            pixels[curIdx].B := interpB;
+            pixels[curIdx].G := interpG;
+            pixels[curIdx].R := interpR;
+            pixels[curIdx].A := interpA;
+          end;
         end;
       end;
     end;
