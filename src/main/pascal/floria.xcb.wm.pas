@@ -446,36 +446,38 @@ begin
   if FManager = nil then Exit;
 
   FManager.FActiveClient := Self;
-  if FManager.Connection = nil then Exit;
-
-  // Raise frame (or client window if direct/unparented)
-  if FIsReparented and (FFrameWindow <> 0) then
-    WinToRaise := FFrameWindow
-  else
-    WinToRaise := FClientWindow;
-
-  Values[0] := XCB_STACK_MODE_ABOVE;
-  xcb_configure_window(FManager.Connection, WinToRaise, XCB_CONFIG_WINDOW_STACK_MODE, @Values[0]);
-
-  // Set input focus
-  xcb_set_input_focus(FManager.Connection, XCB_INPUT_FOCUS_POINTER_ROOT, FClientWindow, XCB_CURRENT_TIME);
-
-  // Send WM_TAKE_FOCUS protocol message if supported
-  if FSupportsTakeFocus and (FManager.AtomWMTakeFocus <> 0) then
+  if FManager.Connection <> nil then
   begin
-    FillChar(Ev, SizeOf(Ev), 0);
-    Ev.response_type := XCB_CLIENT_MESSAGE;
-    Ev.format := 32;
-    Ev.window := FClientWindow;
-    Ev.type_ := FManager.FEwmh.WM_PROTOCOLS;
-    Data32 := PCardinalArray(@Ev.data.raw[0]);
-    Data32^[0] := FManager.AtomWMTakeFocus;
-    Data32^[1] := XCB_CURRENT_TIME;
-    xcb_send_event(FManager.Connection, 0, FClientWindow, XCB_EVENT_MASK_NO_EVENT, PAnsiChar(@Ev));
+    // Raise frame (or client window if direct/unparented)
+    if FIsReparented and (FFrameWindow <> 0) then
+      WinToRaise := FFrameWindow
+    else
+      WinToRaise := FClientWindow;
+
+    Values[0] := XCB_STACK_MODE_ABOVE;
+    xcb_configure_window(FManager.Connection, WinToRaise, XCB_CONFIG_WINDOW_STACK_MODE, @Values[0]);
+
+    // Set input focus
+    xcb_set_input_focus(FManager.Connection, XCB_INPUT_FOCUS_POINTER_ROOT, FClientWindow, XCB_CURRENT_TIME);
+
+    // Send WM_TAKE_FOCUS protocol message if supported
+    if FSupportsTakeFocus and (FManager.AtomWMTakeFocus <> 0) then
+    begin
+      FillChar(Ev, SizeOf(Ev), 0);
+      Ev.response_type := XCB_CLIENT_MESSAGE;
+      Ev.format := 32;
+      Ev.window := FClientWindow;
+      Ev.type_ := FManager.FEwmh.WM_PROTOCOLS;
+      Data32 := PCardinalArray(@Ev.data.raw[0]);
+      Data32^[0] := FManager.AtomWMTakeFocus;
+      Data32^[1] := XCB_CURRENT_TIME;
+      xcb_send_event(FManager.Connection, 0, FClientWindow, XCB_EVENT_MASK_NO_EVENT, PAnsiChar(@Ev));
+    end;
+
+    FManager.RefreshEWMHActiveWindow();
+    xcb_flush(FManager.Connection);
   end;
 
-  FManager.RefreshEWMHActiveWindow();
-  xcb_flush(FManager.Connection);
   FManager.DoOnClientActivated(Self);
 end;
 
