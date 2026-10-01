@@ -486,9 +486,6 @@ begin
 end;
 
 function TXCBCompositor.EnableCompositing(): Boolean;
-var
-  cowCookie: xcb_composite_get_overlay_window_cookie_t;
-  cowReply: Pxcb_composite_get_overlay_window_reply_t;
 begin
   Result := False;
   if FIsActive then Exit(True);
@@ -499,16 +496,7 @@ begin
   // Redirect all subwindows under the root window to offscreen storage
   xcb_composite_redirect_subwindows(FConn, FRootWindow, XCB_COMPOSITE_REDIRECT_MANUAL);
 
-  // Obtain Composite Overlay Window (COW)
-  cowCookie := xcb_composite_get_overlay_window(FConn, FRootWindow);
-  cowReply := xcb_composite_get_overlay_window_reply(FConn, cowCookie, nil);
-  if cowReply <> nil then
-  begin
-    FOverlayWindow := cowReply^.overlay_win;
-    xcb_free(cowReply);
-  end
-  else
-    FOverlayWindow := FRootWindow;
+  FOverlayWindow := 0;
 
   EnsureGC();
   FIsActive := True;

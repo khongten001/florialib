@@ -235,7 +235,7 @@ type
     constructor Create(AConn: Pxcb_connection_t = nil; const AScreenNum: Integer = 0);
     destructor Destroy(); override;
 
-    function ClaimOwnership(): Boolean;
+    function ClaimOwnership(): Boolean; virtual;
     procedure InitEWMH();
     procedure ScanWindows();
     function ManageWindow(const AWindow: xcb_window_t): TXCBWMClient;
@@ -1544,6 +1544,7 @@ var
   FrameRect: TXCBRect;
   CfgValues: array[0..3] of Cardinal;
   CfgMask: Cardinal;
+  newX, newY, newW, newH: Integer;
 begin
   Result := False;
   if AEvent = nil then Exit;
@@ -1565,13 +1566,22 @@ begin
       Cli := FindClient(CfgEv^.window);
       if Cli <> nil then
       begin
+        newX := Cli.CurrentRect.X;
+        newY := Cli.CurrentRect.Y;
+        newW := Cli.CurrentRect.Width;
+        newH := Cli.CurrentRect.Height;
+        if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_X) <> 0 then newX := CfgEv^.x;
+        if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_Y) <> 0 then newY := CfgEv^.y;
+        if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_WIDTH) <> 0 then newW := CfgEv^.width;
+        if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_HEIGHT) <> 0 then newH := CfgEv^.height;
+
         if (CfgEv^.window = Cli.ClientWindow) and Cli.IsReparented then
         begin
-          FrameRect := FFrameMetrics.ClientToFrameRect(TXCBRect.Create(CfgEv^.x, CfgEv^.y, CfgEv^.width, CfgEv^.height));
+          FrameRect := FFrameMetrics.ClientToFrameRect(TXCBRect.Create(newX, newY, newW, newH));
           Cli.SetGeometry(FrameRect.X, FrameRect.Y, FrameRect.Width, FrameRect.Height);
         end
         else
-          Cli.SetGeometry(CfgEv^.x, CfgEv^.y, CfgEv^.width, CfgEv^.height);
+          Cli.SetGeometry(newX, newY, newW, newH);
       end
       else
       begin
@@ -1623,7 +1633,7 @@ begin
       begin
         Cli.Activate();
         if FConn <> nil then
-          xcb_allow_events(FConn, XCB_ALLOW_REPLAY_POINTER, BtnEv^.time);
+          xcb_allow_events(FConn, XCB_ALLOW_ASYNC_POINTER, BtnEv^.time);
 
         // If clicked on frame titlebar
         if BtnEv^.event = Cli.FrameWindow then
