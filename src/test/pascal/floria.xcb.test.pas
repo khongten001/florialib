@@ -16,6 +16,8 @@ uses
   Floria.XCB.SHM,
   Floria.XCB.Shape,
   Floria.XCB.XFixes,
+  Floria.XCB.Composite,
+  Floria.XCB.Damage,
   Floria.X11.KeySym;
 
 procedure libc_free(p: Pointer); cdecl; external 'c' name 'free';
@@ -32,6 +34,7 @@ type
     procedure TestKeysymsAllocAndFree();
     procedure TestCursorContext();
     procedure TestExtensionsQuery();
+    procedure TestCompositeAndDamageConstants();
   end;
 
 implementation
@@ -203,6 +206,10 @@ var
   RenderReply: Pxcb_render_query_version_reply_t;
   ShmCookie: xcb_shm_query_version_cookie_t;
   ShmReply: Pxcb_shm_query_version_reply_t;
+  CompCookie: xcb_composite_query_version_cookie_t;
+  CompReply: Pxcb_composite_query_version_reply_t;
+  DmgCookie: xcb_damage_query_version_cookie_t;
+  DmgReply: Pxcb_damage_query_version_reply_t;
 begin
   ScreenNum := 0;
   Conn := xcb_connect(nil, @ScreenNum);
@@ -236,10 +243,44 @@ begin
         AssertTrue('SHM supported', ShmReply^.major_version >= 1);
         libc_free(ShmReply);
       end;
+
+      // Query Composite extension
+      CompCookie := xcb_composite_query_version(Conn, 0, 4);
+      CompReply := xcb_composite_query_version_reply(Conn, CompCookie, nil);
+      if CompReply <> nil then
+      begin
+        AssertTrue('Composite extension is supported by X server', CompReply^.minor_version >= 1);
+        libc_free(CompReply);
+      end;
+
+      // Query Damage extension
+      DmgCookie := xcb_damage_query_version(Conn, 1, 1);
+      DmgReply := xcb_damage_query_version_reply(Conn, DmgCookie, nil);
+      if DmgReply <> nil then
+      begin
+        AssertTrue('Damage extension is supported by X server', DmgReply^.major_version >= 1);
+        libc_free(DmgReply);
+      end;
     end;
   finally
     xcb_disconnect(Conn);
   end;
+end;
+
+procedure TXCBTest.TestCompositeAndDamageConstants();
+begin
+  AssertEquals('Composite major', 0, XCB_COMPOSITE_MAJOR_VERSION);
+  AssertEquals('Composite minor', 4, XCB_COMPOSITE_MINOR_VERSION);
+  AssertEquals('Composite redirect auto', 0, XCB_COMPOSITE_REDIRECT_AUTOMATIC);
+  AssertEquals('Composite redirect manual', 1, XCB_COMPOSITE_REDIRECT_MANUAL);
+
+  AssertEquals('Damage major', 1, XCB_DAMAGE_MAJOR_VERSION);
+  AssertEquals('Damage minor', 1, XCB_DAMAGE_MINOR_VERSION);
+  AssertEquals('Damage notify event', 0, XCB_DAMAGE_NOTIFY);
+  AssertEquals('Damage report raw', 0, XCB_DAMAGE_REPORT_LEVEL_RAW_RECTANGLES);
+  AssertEquals('Damage report delta', 1, XCB_DAMAGE_REPORT_LEVEL_DELTA_RECTANGLES);
+  AssertEquals('Damage report bounding box', 2, XCB_DAMAGE_REPORT_LEVEL_BOUNDING_BOX);
+  AssertEquals('Damage report non-empty', 3, XCB_DAMAGE_REPORT_LEVEL_NON_EMPTY);
 end;
 
 initialization

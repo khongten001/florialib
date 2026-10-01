@@ -21,7 +21,8 @@ uses
   Floria.Canvas.Agg.Test,
   Floria.Unicode.BiDi.Test,
   Floria.Text.HarfBuzz.Test,
-  Floria.EGL.Test;
+  Floria.EGL.Test,
+  Floria.XCB.WM.Compositor.Test;
 
 var
   Application: TTestRunner;
