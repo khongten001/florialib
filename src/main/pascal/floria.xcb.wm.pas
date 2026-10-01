@@ -1541,6 +1541,7 @@ var
   MsgEv: Pxcb_client_message_event_t;
   MsgData32: PCardinalArray;
   Cli: TXCBWMClient;
+  FrameRect: TXCBRect;
   CfgValues: array[0..3] of Cardinal;
   CfgMask: Cardinal;
 begin
@@ -1561,10 +1562,16 @@ begin
     XCB_CONFIGURE_REQUEST:
     begin
       CfgEv := Pxcb_configure_request_event_t(AEvent);
-      Cli := FindClientByClientWindow(CfgEv^.window);
+      Cli := FindClient(CfgEv^.window);
       if Cli <> nil then
       begin
-        Cli.SetGeometry(CfgEv^.x, CfgEv^.y, CfgEv^.width, CfgEv^.height);
+        if (CfgEv^.window = Cli.ClientWindow) and Cli.IsReparented then
+        begin
+          FrameRect := FFrameMetrics.ClientToFrameRect(TXCBRect.Create(CfgEv^.x, CfgEv^.y, CfgEv^.width, CfgEv^.height));
+          Cli.SetGeometry(FrameRect.X, FrameRect.Y, FrameRect.Width, FrameRect.Height);
+        end
+        else
+          Cli.SetGeometry(CfgEv^.x, CfgEv^.y, CfgEv^.width, CfgEv^.height);
       end
       else
       begin

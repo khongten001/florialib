@@ -63,6 +63,7 @@ type
   TFtRoundedClip = record
     OrigX, OrigY, OrigW, OrigH: Double;
     Radius                    : Double;
+    BottomRadius              : Double;
     HasCorners                : Boolean;
     Corners                   : array[0..3] of TFtCornerSnapshot;
   end;
@@ -103,7 +104,8 @@ type
 
     procedure PushClipRect(X, Y, W, H: Integer);
     procedure PopClipRect();
-    procedure PushClipRoundedRect(X, Y, W, H: Double; Radius: Double);
+    procedure PushClipRoundedRect(X, Y, W, H: Double; Radius: Double); overload;
+    procedure PushClipRoundedRect(X, Y, W, H: Double; TopRadius, BottomRadius: Double); overload;
     procedure PopClipRoundedRect();
     procedure SetClipRect(X, Y, W, H: Integer);
     procedure ResetClipRect();
@@ -283,13 +285,16 @@ begin
 end;
 
 procedure TFloriaCanvasAgg.PushClipRoundedRect(X, Y, W, H: Double; Radius: Double);
+begin
+  PushClipRoundedRect(X, Y, W, H, Radius, Radius);
+end;
+
+procedure TFloriaCanvasAgg.PushClipRoundedRect(X, Y, W, H: Double; TopRadius, BottomRadius: Double);
 var
   rc: TFtRoundedClip;
   intX, intY, intW, intH: Integer;
-  rad: Double;
-  radInt: Integer;
-  cIdx: Integer;
-  cx, cy, cw, ch: Integer;
+  topRad, botRad: Double;
+  radInt, cIdx, cx, cy, cw, ch: Integer;
   pSrc: PBgraPixel;
   px, py, idx: Integer;
 begin
@@ -300,26 +305,44 @@ begin
 
   PushClipRect(intX, intY, intW, intH);
 
-  rad := Radius;
-  if rad < 0.0 then rad := 0.0;
-  if (intW > 0) and (rad * 2.0 > intW) then rad := intW * 0.5;
-  if (intH > 0) and (rad * 2.0 > intH) then rad := intH * 0.5;
+  topRad := TopRadius;
+  botRad := BottomRadius;
+  if topRad < 0.0 then topRad := 0.0;
+  if botRad < 0.0 then botRad := 0.0;
+  if (intW > 0) and (topRad * 2.0 > intW) then topRad := intW * 0.5;
+  if (intH > 0) and (topRad * 2.0 > intH) then topRad := intH * 0.5;
+  if (intW > 0) and (botRad * 2.0 > intW) then botRad := intW * 0.5;
+  if (intH > 0) and (botRad * 2.0 > intH) then botRad := intH * 0.5;
 
   rc.OrigX := X;
   rc.OrigY := Y;
   rc.OrigW := W;
   rc.OrigH := H;
-  rc.Radius := rad;
+  rc.Radius := topRad;
+  rc.BottomRadius := botRad;
   rc.HasCorners := False;
 
-  if (rad > 0.5) and (intW > 2) and (intH > 2) and Assigned(FBuffer) then
+  if ((topRad > 0.5) or (botRad > 0.5)) and (intW > 2) and (intH > 2) and Assigned(FBuffer) then
   begin
-    radInt := Ceil(rad);
-    if radInt < 1 then radInt := 1;
     rc.HasCorners := True;
 
     for cIdx := 0 to 3 do
     begin
+      if cIdx in [0, 1] then
+        radInt := Ceil(topRad)
+      else
+        radInt := Ceil(botRad);
+
+      if radInt < 1 then
+      begin
+        rc.Corners[cIdx].X := 0;
+        rc.Corners[cIdx].Y := 0;
+        rc.Corners[cIdx].W := 0;
+        rc.Corners[cIdx].H := 0;
+        SetLength(rc.Corners[cIdx].Pixels, 0);
+        Continue;
+      end;
+
       case cIdx of
         0: begin cx := intX; cy := intY; end;
         1: begin cx := intX + intW - radInt; cy := intY; end;
@@ -384,11 +407,8 @@ begin
 
   PopClipRect();
 
-  if rc.HasCorners and Assigned(FBuffer) and (rc.Radius > 0.5) then
+  if rc.HasCorners and Assigned(FBuffer) then
   begin
-    rad := rc.Radius;
-    maxDistSq := (rad + 0.5) * (rad + 0.5);
-    minDistSq := (rad - 0.5) * (rad - 0.5);
     pDst := PBgraPixel(FBuffer);
 
     for cIdx := 0 to 3 do
@@ -399,6 +419,16 @@ begin
       ch := rc.Corners[cIdx].H;
       if (cw <= 0) or (ch <= 0) or (Length(rc.Corners[cIdx].Pixels) = 0) then
         Continue;
+
+      if cIdx in [0, 1] then
+        rad := rc.Radius
+      else
+        rad := rc.BottomRadius;
+
+      if rad <= 0.5 then Continue;
+
+      maxDistSq := (rad + 0.5) * (rad + 0.5);
+      minDistSq := (rad - 0.5) * (rad - 0.5);
 
       case cIdx of
         0: begin arcX := rc.OrigX + rad; arcY := rc.OrigY + rad; end;

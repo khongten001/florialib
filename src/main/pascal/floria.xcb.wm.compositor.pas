@@ -54,6 +54,7 @@ type
     FHasBackdropBlur: Boolean;
     FBlurRadius     : Integer;
     FCornerRadius   : Integer;
+    FBottomCornerRadius: Integer;
     FIsDirty        : Boolean;
     FIsVisible      : Boolean;
     FImage          : TFloriaImage;
@@ -77,9 +78,10 @@ type
     property Opacity        : Single                 read FOpacity write FOpacity;
     property ShadowConfig   : TXCBWindowShadowConfig read FShadowConfig write FShadowConfig;
     property HasBackdropBlur: Boolean                read FHasBackdropBlur write FHasBackdropBlur;
-    property BlurRadius     : Integer                read FBlurRadius write FBlurRadius;
-    property CornerRadius   : Integer                read FCornerRadius write FCornerRadius;
-    property IsDirty        : Boolean                read FIsDirty write FIsDirty;
+    property BlurRadius        : Integer                read FBlurRadius write FBlurRadius;
+    property CornerRadius      : Integer                read FCornerRadius write FCornerRadius;
+    property BottomCornerRadius: Integer                read FBottomCornerRadius write FBottomCornerRadius;
+    property IsDirty           : Boolean                read FIsDirty write FIsDirty;
     property IsVisible      : Boolean                read FIsVisible write FIsVisible;
     property Image          : TFloriaImage           read FImage write FImage;
     property HasAlphaChannel: Boolean                read FHasAlphaChannel write FHasAlphaChannel;
@@ -146,6 +148,8 @@ type
     procedure SetWindowBackdropBlur(const AWindow: xcb_window_t; const AEnabled: Boolean; const ARadius: Integer = 15);
     procedure SetWindowShadow(const AWindow: xcb_window_t; const AEnabled: Boolean;
                               const ARadius: Integer = 12; const AOffsetY: Integer = 4; const AOpacity: Single = 0.35);
+    procedure SetWindowCornerRadius(const AWindow: xcb_window_t; const ARadius: Integer); overload;
+    procedure SetWindowCornerRadius(const AWindow: xcb_window_t; const ATopRadius, ABottomRadius: Integer); overload;
 
     property Connection     : Pxcb_connection_t       read FConn;
     property RootWindow     : xcb_window_t            read FRootWindow;
@@ -203,7 +207,8 @@ begin
   FShadowConfig := TXCBWindowShadowConfig.Create(True, 12, 4, 0.35);
   FHasBackdropBlur := False;
   FBlurRadius := 15;
-  FCornerRadius := 8;
+  FCornerRadius := 10;
+  FBottomCornerRadius := 10;
   FIsDirty := True;
   FIsVisible := True;
   FHasAlphaChannel := False;
@@ -649,6 +654,23 @@ begin
     w.ShadowConfig := TXCBWindowShadowConfig.Create(AEnabled, ARadius, AOffsetY, AOpacity);
 end;
 
+procedure TXCBCompositor.SetWindowCornerRadius(const AWindow: xcb_window_t; const ARadius: Integer);
+begin
+  SetWindowCornerRadius(AWindow, ARadius, ARadius);
+end;
+
+procedure TXCBCompositor.SetWindowCornerRadius(const AWindow: xcb_window_t; const ATopRadius, ABottomRadius: Integer);
+var
+  w: TXCBCompositedWindow;
+begin
+  w := FindWindow(AWindow);
+  if w <> nil then
+  begin
+    w.CornerRadius := Max(0, ATopRadius);
+    w.BottomCornerRadius := Max(0, ABottomRadius);
+  end;
+end;
+
 procedure TXCBCompositor.CompositeScene();
 var
   i: Integer;
@@ -715,9 +737,21 @@ begin
       end;
     end;
 
-    // C. Render Window Surface (Client Image) with Opacity
+    // C. Render Window Surface (Client Image) with Opacity and Rounded Corners
     if w.Image <> nil then
-      FSceneCanvas.DrawImage(w.Geometry.X, w.Geometry.Y, w.Image, w.Opacity);
+    begin
+      if ((w.CornerRadius > 0) or (w.BottomCornerRadius > 0)) and
+         (w.Geometry.Width > Max(w.CornerRadius, w.BottomCornerRadius) * 2) and
+         (w.Geometry.Height > Max(w.CornerRadius, w.BottomCornerRadius) * 2) then
+      begin
+        FSceneCanvas.PushClipRoundedRect(w.Geometry.X, w.Geometry.Y, w.Geometry.Width, w.Geometry.Height,
+                                         w.CornerRadius, w.BottomCornerRadius);
+        FSceneCanvas.DrawImage(w.Geometry.X, w.Geometry.Y, w.Image, w.Opacity);
+        FSceneCanvas.PopClipRoundedRect();
+      end
+      else
+        FSceneCanvas.DrawImage(w.Geometry.X, w.Geometry.Y, w.Image, w.Opacity);
+    end;
   end;
 
   if Assigned(FOnAfterRender) then
