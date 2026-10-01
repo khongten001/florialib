@@ -441,13 +441,37 @@ var
   Values: array[0..0] of Cardinal;
   Ev: xcb_client_message_event_t;
   Data32: PCardinalArray;
+  OldCli: TXCBWMClient;
 begin
   Include(FState, wsFocused);
   if FManager = nil then Exit;
 
+  OldCli := FManager.FActiveClient;
   FManager.FActiveClient := Self;
   if FManager.Connection <> nil then
   begin
+    // Restore passive click-to-focus grab on previous client window
+    if (OldCli <> nil) and (OldCli <> Self) and (OldCli.ClientWindow <> 0) then
+    begin
+      Exclude(OldCli.FState, wsFocused);
+      xcb_grab_button(
+        FManager.Connection,
+        0,
+        OldCli.ClientWindow,
+        XCB_EVENT_MASK_BUTTON_PRESS,
+        XCB_GRAB_MODE_SYNC,
+        XCB_GRAB_MODE_ASYNC,
+        XCB_NONE,
+        XCB_NONE,
+        XCB_BUTTON_INDEX_1,
+        XCB_MOD_MASK_ANY
+      );
+    end;
+
+    // Ungrab button 1 on active client so clicks flow directly to client widgets
+    if FClientWindow <> 0 then
+      xcb_ungrab_button(FManager.Connection, XCB_BUTTON_INDEX_1, FClientWindow, XCB_MOD_MASK_ANY);
+
     // Raise frame (or client window if direct/unparented)
     if FIsReparented and (FFrameWindow <> 0) then
       WinToRaise := FFrameWindow
@@ -1268,7 +1292,8 @@ begin
                   XCB_EVENT_MASK_BUTTON_PRESS or
                   XCB_EVENT_MASK_BUTTON_RELEASE or
                   XCB_EVENT_MASK_POINTER_MOTION or
-                  XCB_EVENT_MASK_ENTER_WINDOW;
+                  XCB_EVENT_MASK_ENTER_WINDOW or
+                  XCB_EVENT_MASK_LEAVE_WINDOW;
 
   xcb_create_window(
     FConn,
@@ -1279,7 +1304,7 @@ begin
     ARect.Y,
     ARect.Width,
     ARect.Height,
-    FFrameMetrics.BorderWidth,
+    0, // ICCCM: Frame window has border_width 0 (decorations rendered internally)
     XCB_WINDOW_CLASS_INPUT_OUTPUT,
     XCB_COPY_FROM_PARENT,
     ValueMask,
@@ -1633,7 +1658,12 @@ begin
       begin
         Cli.Activate();
         if FConn <> nil then
-          xcb_allow_events(FConn, XCB_ALLOW_ASYNC_POINTER, BtnEv^.time);
+        begin
+          if BtnEv^.event = Cli.ClientWindow then
+            xcb_allow_events(FConn, XCB_ALLOW_REPLAY_POINTER, BtnEv^.time)
+          else
+            xcb_allow_events(FConn, XCB_ALLOW_ASYNC_POINTER, BtnEv^.time);
+        end;
 
         // If clicked on frame titlebar
         if BtnEv^.event = Cli.FrameWindow then
