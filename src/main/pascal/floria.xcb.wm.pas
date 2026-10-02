@@ -255,6 +255,7 @@ type
     // Reparenting and framing
     procedure ReparentClient(const AClient: TXCBWMClient);
     procedure UnparentClient(const AClient: TXCBWMClient);
+    procedure SendSyntheticConfigureNotify(const AClient: TXCBWMClient);
 
     // Interactive dragging helpers
     procedure BeginDrag(const AClient: TXCBWMClient; const AMode: TXCBDragMode; const ARootX, ARootY: Integer); virtual;
@@ -1318,10 +1319,21 @@ procedure TXCBWindowManager.ReparentClient(const AClient: TXCBWMClient);
 var
   FrameRect, ClientInnerRect: TXCBRect;
   FrameWin: xcb_window_t;
+  Values: array[0..3] of Cardinal;
 begin
   if (AClient = nil) or AClient.IsReparented or (FConn = nil) then Exit;
 
+  // If initial window geometry is minimal (e.g. 1x1 before configure), provide a reasonable default
+  if AClient.CurrentRect.Width <= 1 then
+    AClient.CurrentRect := TXCBRect.Create(AClient.CurrentRect.X, AClient.CurrentRect.Y, 600, AClient.CurrentRect.Height);
+  if AClient.CurrentRect.Height <= 1 then
+    AClient.CurrentRect := TXCBRect.Create(AClient.CurrentRect.X, AClient.CurrentRect.Y, AClient.CurrentRect.Width, 400);
+
   FrameRect := FFrameMetrics.ClientToFrameRect(AClient.CurrentRect);
+  // Ensure the frame window is not placed off-screen above the top
+  if FrameRect.Y < 0 then
+    FrameRect.Y := 0;
+
   FrameWin := CreateFrameWindow(AClient, FrameRect);
   if FrameWin = 0 then Exit;
 
@@ -1337,6 +1349,16 @@ begin
     FrameWin,
     ClientInnerRect.X,
     ClientInnerRect.Y
+  );
+
+  // Resize client window to match inner frame
+  Values[0] := ClientInnerRect.Width;
+  Values[1] := ClientInnerRect.Height;
+  xcb_configure_window(
+    FConn,
+    AClient.ClientWindow,
+    XCB_CONFIG_WINDOW_WIDTH or XCB_CONFIG_WINDOW_HEIGHT,
+    @Values[0]
   );
 
   // Passive grab on mouse button 1 for click-to-focus
@@ -1355,6 +1377,36 @@ begin
 
   xcb_map_window(FConn, FrameWin);
   xcb_map_window(FConn, AClient.ClientWindow);
+  xcb_flush(FConn);
+
+  // Send synthetic ConfigureNotify per ICCCM 4.1.4
+  SendSyntheticConfigureNotify(AClient);
+end;
+
+procedure TXCBWindowManager.SendSyntheticConfigureNotify(const AClient: TXCBWMClient);
+var
+  Ce: xcb_configure_notify_event_t;
+  InnerRect: TXCBRect;
+begin
+  if (FConn = nil) or (AClient = nil) or (AClient.ClientWindow = 0) then Exit;
+
+  InnerRect := FFrameMetrics.FrameToClientInnerRect(AClient.CurrentRect);
+
+  FillChar(Ce, SizeOf(Ce), 0);
+  Ce.response_type := XCB_CONFIGURE_NOTIFY;
+  Ce.event := AClient.ClientWindow;
+  Ce.window := AClient.ClientWindow;
+  Ce.above_sibling := XCB_NONE;
+  // Per ICCCM: coordinates must be in root window coordinate space
+  Ce.x := SmallInt(AClient.CurrentRect.X + InnerRect.X);
+  Ce.y := SmallInt(AClient.CurrentRect.Y + InnerRect.Y);
+  Ce.width := Word(InnerRect.Width);
+  Ce.height := Word(InnerRect.Height);
+  Ce.border_width := 0;
+  Ce.override_redirect := 0;
+
+  xcb_send_event(FConn, 0, AClient.ClientWindow,
+                 XCB_EVENT_MASK_STRUCTURE_NOTIFY, PAnsiChar(@Ce));
   xcb_flush(FConn);
 end;
 
@@ -1567,9 +1619,10 @@ var
   MsgData32: PCardinalArray;
   Cli: TXCBWMClient;
   FrameRect: TXCBRect;
-  CfgValues: array[0..3] of Cardinal;
+  CfgValues: array[0..6] of Cardinal;
   CfgMask: Cardinal;
   newX, newY, newW, newH: Integer;
+  valIdx: Integer;
 begin
   Result := False;
   if AEvent = nil then Exit;
@@ -1603,26 +1656,58 @@ begin
         if (CfgEv^.window = Cli.ClientWindow) and Cli.IsReparented then
         begin
           FrameRect := FFrameMetrics.ClientToFrameRect(TXCBRect.Create(newX, newY, newW, newH));
+          if FrameRect.Y < 0 then
+            FrameRect.Y := 0;
           Cli.SetGeometry(FrameRect.X, FrameRect.Y, FrameRect.Width, FrameRect.Height);
+          SendSyntheticConfigureNotify(Cli);
         end
         else
           Cli.SetGeometry(newX, newY, newW, newH);
       end
       else
       begin
-        // Forward configure request for unmanaged window
+        // Forward configure request for unmanaged window with proper packed value list
         if FConn <> nil then
         begin
-          CfgMask := 0;
-          CfgValues[0] := CfgEv^.x;
-          CfgValues[1] := CfgEv^.y;
-          CfgValues[2] := CfgEv^.width;
-          CfgValues[3] := CfgEv^.height;
-          if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_X) <> 0 then CfgMask := CfgMask or XCB_CONFIG_WINDOW_X;
-          if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_Y) <> 0 then CfgMask := CfgMask or XCB_CONFIG_WINDOW_Y;
-          if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_WIDTH) <> 0 then CfgMask := CfgMask or XCB_CONFIG_WINDOW_WIDTH;
-          if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_HEIGHT) <> 0 then CfgMask := CfgMask or XCB_CONFIG_WINDOW_HEIGHT;
-          xcb_configure_window(FConn, CfgEv^.window, CfgMask, @CfgValues[0]);
+          valIdx := 0;
+          if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_X) <> 0 then
+          begin
+            CfgValues[valIdx] := CfgEv^.x;
+            Inc(valIdx);
+          end;
+          if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_Y) <> 0 then
+          begin
+            CfgValues[valIdx] := CfgEv^.y;
+            Inc(valIdx);
+          end;
+          if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_WIDTH) <> 0 then
+          begin
+            CfgValues[valIdx] := CfgEv^.width;
+            Inc(valIdx);
+          end;
+          if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_HEIGHT) <> 0 then
+          begin
+            CfgValues[valIdx] := CfgEv^.height;
+            Inc(valIdx);
+          end;
+          if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_BORDER_WIDTH) <> 0 then
+          begin
+            CfgValues[valIdx] := CfgEv^.border_width;
+            Inc(valIdx);
+          end;
+          if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_SIBLING) <> 0 then
+          begin
+            CfgValues[valIdx] := CfgEv^.sibling;
+            Inc(valIdx);
+          end;
+          if (CfgEv^.value_mask and XCB_CONFIG_WINDOW_STACK_MODE) <> 0 then
+          begin
+            CfgValues[valIdx] := CfgEv^.stack_mode;
+            Inc(valIdx);
+          end;
+
+          if valIdx > 0 then
+            xcb_configure_window(FConn, CfgEv^.window, CfgEv^.value_mask, @CfgValues[0]);
           xcb_flush(FConn);
         end;
       end;

@@ -197,6 +197,9 @@ end;
 
 constructor TXCBCompositedWindow.Create(const ACompositor: TXCBCompositor; const AWindow: xcb_window_t;
                                        const AGeometry: TXCBRect; const AFrame: xcb_window_t);
+var
+  geomCookie: xcb_get_geometry_cookie_t;
+  geomReply: Pxcb_get_geometry_reply_t;
 begin
   inherited Create();
   FCompositor := ACompositor;
@@ -219,6 +222,15 @@ begin
 
   if (FCompositor <> nil) and (FCompositor.Connection <> nil) and (FWindow <> 0) then
   begin
+    // Check window visual depth to determine if window has a native 32-bit alpha channel
+    geomCookie := xcb_get_geometry(FCompositor.Connection, FWindow);
+    geomReply := xcb_get_geometry_reply(FCompositor.Connection, geomCookie, nil);
+    if geomReply <> nil then
+    begin
+      FHasAlphaChannel := (geomReply^.depth = 32);
+      xcb_free(geomReply);
+    end;
+
     // Create Damage tracking object
     FDamage := xcb_generate_id(FCompositor.Connection);
     xcb_damage_create(FCompositor.Connection, FDamage, FWindow, XCB_DAMAGE_REPORT_LEVEL_NON_EMPTY);
@@ -304,7 +316,7 @@ var
   reply: Pxcb_get_image_reply_t;
   rawBytes: PByte;
   targetW, targetH: Integer;
-  y: Integer;
+  x, y: Integer;
   srcRow, dstRow: PByte;
   rowBytes: Integer;
 begin
@@ -333,7 +345,13 @@ begin
     begin
       srcRow := rawBytes + (y * rowBytes);
       dstRow := PByte(FImage.Scanline[y]);
-      Move(srcRow^, dstRow^, rowBytes);
+      if FHasAlphaChannel then
+        Move(srcRow^, dstRow^, rowBytes)
+      else
+      begin
+        for x := 0 to targetW - 1 do
+          PDWord(dstRow + (x * 4))^ := PDWord(srcRow + (x * 4))^ or Cardinal($FF000000);
+      end;
     end;
 
     FIsDirty := False;
