@@ -95,7 +95,9 @@ type
     wsAbove,
     wsBelow,
     wsHidden,
-    wsFocused
+    wsFocused,
+    wsTiledLeft,
+    wsTiledRight
   );
   TXCBWindowState = set of TXCBWindowStateFlag;
 
@@ -153,6 +155,8 @@ type
     procedure Close();
     procedure Maximize();
     procedure Restore();
+    procedure TileLeft();
+    procedure TileRight();
     procedure Minimize();
     procedure SetFullscreen(const AFullscreen: Boolean);
     procedure Move(const AX, AY: Integer);
@@ -260,6 +264,7 @@ type
     // Interactive dragging helpers
     procedure BeginDrag(const AClient: TXCBWMClient; const AMode: TXCBDragMode; const ARootX, ARootY: Integer); virtual;
     procedure UpdateDrag(const ARootX, ARootY: Integer); virtual;
+    procedure UpdateDragOrigin(const ARootX, ARootY: Integer; const ARect: TXCBRect);
     procedure EndDrag(); virtual;
 
     property Connection        : Pxcb_connection_t   read FConn;
@@ -541,7 +546,14 @@ var
 begin
   if (wsMaximizedHorz in FState) and (wsMaximizedVert in FState) then Exit;
 
-  FRestoredRect := FCurrentRect;
+  // Only update FRestoredRect if not already tiled, maximized, or fullscreen
+  if not ((wsMaximizedHorz in FState) or (wsMaximizedVert in FState) or
+          (wsTiledLeft in FState) or (wsTiledRight in FState) or
+          (wsFullscreen in FState)) then
+    FRestoredRect := FCurrentRect;
+
+  Exclude(FState, wsTiledLeft);
+  Exclude(FState, wsTiledRight);
   Include(FState, wsMaximizedHorz);
   Include(FState, wsMaximizedVert);
 
@@ -559,13 +571,104 @@ begin
   end;
 end;
 
+procedure TXCBWMClient.TileLeft();
+var
+  TargetRect: TXCBRect;
+  sw, sh: Integer;
+begin
+  if (wsTiledLeft in FState) then Exit;
+
+  // Only update FRestoredRect if not already tiled, maximized, or fullscreen
+  if not ((wsMaximizedHorz in FState) or (wsMaximizedVert in FState) or
+          (wsTiledLeft in FState) or (wsTiledRight in FState) or
+          (wsFullscreen in FState)) then
+    FRestoredRect := FCurrentRect;
+
+  Exclude(FState, wsMaximizedHorz);
+  Exclude(FState, wsMaximizedVert);
+  Exclude(FState, wsFullscreen);
+  Exclude(FState, wsTiledRight);
+  Include(FState, wsTiledLeft);
+
+  if FManager <> nil then
+  begin
+    TargetRect := FManager.Workarea;
+    if (TargetRect.Width > 0) and (TargetRect.Height > 0) then
+    begin
+      sw := TargetRect.Width;
+      sh := TargetRect.Height;
+      SetGeometry(TargetRect.X, TargetRect.Y, sw div 2, sh);
+      Exit;
+    end;
+
+    if FManager.Screen <> nil then
+    begin
+      sw := FManager.Screen^.width_in_pixels;
+      sh := FManager.Screen^.height_in_pixels;
+    end
+    else
+    begin
+      sw := 1920;
+      sh := 1080;
+    end;
+    SetGeometry(0, 0, sw div 2, sh);
+  end;
+end;
+
+procedure TXCBWMClient.TileRight();
+var
+  TargetRect: TXCBRect;
+  sw, sh: Integer;
+begin
+  if (wsTiledRight in FState) then Exit;
+
+  // Only update FRestoredRect if not already tiled, maximized, or fullscreen
+  if not ((wsMaximizedHorz in FState) or (wsMaximizedVert in FState) or
+          (wsTiledLeft in FState) or (wsTiledRight in FState) or
+          (wsFullscreen in FState)) then
+    FRestoredRect := FCurrentRect;
+
+  Exclude(FState, wsMaximizedHorz);
+  Exclude(FState, wsMaximizedVert);
+  Exclude(FState, wsFullscreen);
+  Exclude(FState, wsTiledLeft);
+  Include(FState, wsTiledRight);
+
+  if FManager <> nil then
+  begin
+    TargetRect := FManager.Workarea;
+    if (TargetRect.Width > 0) and (TargetRect.Height > 0) then
+    begin
+      sw := TargetRect.Width;
+      sh := TargetRect.Height;
+      SetGeometry(TargetRect.X + (sw div 2), TargetRect.Y, sw - (sw div 2), sh);
+      Exit;
+    end;
+
+    if FManager.Screen <> nil then
+    begin
+      sw := FManager.Screen^.width_in_pixels;
+      sh := FManager.Screen^.height_in_pixels;
+    end
+    else
+    begin
+      sw := 1920;
+      sh := 1080;
+    end;
+    SetGeometry(sw div 2, 0, sw - (sw div 2), sh);
+  end;
+end;
+
 procedure TXCBWMClient.Restore();
 begin
-  if (wsMaximizedHorz in FState) or (wsMaximizedVert in FState) or (wsFullscreen in FState) then
+  if (wsMaximizedHorz in FState) or (wsMaximizedVert in FState) or (wsFullscreen in FState) or
+     (wsTiledLeft in FState) or (wsTiledRight in FState) then
   begin
     Exclude(FState, wsMaximizedHorz);
     Exclude(FState, wsMaximizedVert);
     Exclude(FState, wsFullscreen);
+    Exclude(FState, wsTiledLeft);
+    Exclude(FState, wsTiledRight);
 
     if (FRestoredRect.Width > 0) and (FRestoredRect.Height > 0) then
       SetGeometry(FRestoredRect.X, FRestoredRect.Y, FRestoredRect.Width, FRestoredRect.Height);
@@ -598,7 +701,11 @@ begin
 
   if AFullscreen then
   begin
-    FRestoredRect := FCurrentRect;
+    if not ((wsMaximizedHorz in FState) or (wsMaximizedVert in FState) or
+            (wsTiledLeft in FState) or (wsTiledRight in FState) or
+            (wsFullscreen in FState)) then
+      FRestoredRect := FCurrentRect;
+
     Include(FState, wsFullscreen);
     if FManager <> nil then
     begin
@@ -638,6 +745,11 @@ begin
   FCurrentRect.Y := AY;
   FCurrentRect.Width := AWidth;
   FCurrentRect.Height := AHeight;
+
+  // Keep FRestoredRect updated whenever the window is in normal (floating) state
+  if not ((wsMaximizedHorz in FState) or (wsMaximizedVert in FState) or
+          (wsFullscreen in FState) or (wsTiledLeft in FState) or (wsTiledRight in FState)) then
+    FRestoredRect := FCurrentRect;
 
   if FManager = nil then Exit;
   if FManager.Connection = nil then Exit;
@@ -1475,6 +1587,7 @@ begin
       end;
     end;
 
+    Cli.RestoredRect := Cli.CurrentRect;
     FClients.Add(Cli);
     Result := Cli;
 
@@ -1991,9 +2104,23 @@ begin
   end;
 end;
 
+procedure TXCBWindowManager.UpdateDragOrigin(const ARootX, ARootY: Integer; const ARect: TXCBRect);
+begin
+  FDragStartPointer := TXCBPoint.Create(ARootX, ARootY);
+  FDragStartRect := ARect;
+end;
+
 procedure TXCBWindowManager.EndDrag();
 begin
   if FDragMode = dmNone then Exit;
+
+  if (FDragClient <> nil) and
+     not ((wsMaximizedHorz in FDragClient.State) or (wsMaximizedVert in FDragClient.State) or
+          (wsFullscreen in FDragClient.State) or (wsTiledLeft in FDragClient.State) or
+          (wsTiledRight in FDragClient.State)) then
+  begin
+    FDragClient.RestoredRect := FDragClient.CurrentRect;
+  end;
 
   if FConn <> nil then
   begin

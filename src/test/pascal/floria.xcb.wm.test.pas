@@ -23,6 +23,7 @@ type
     procedure TestWindowState();
     procedure TestClientLifecycleOffline();
     procedure TestClientMaximizeAndRestore();
+    procedure TestClientTileAndRestore();
     procedure TestClientFullscreen();
     procedure TestClientSizeConstraints();
     procedure TestVirtualDesktops();
@@ -170,6 +171,58 @@ begin
     AssertEquals('Restored Y', InitialR.Y, Client.CurrentRect.Y);
     AssertEquals('Restored Width', InitialR.Width, Client.CurrentRect.Width);
     AssertEquals('Restored Height', InitialR.Height, Client.CurrentRect.Height);
+  finally
+    Mgr.Free();
+  end;
+end;
+
+procedure TXCBWMTest.TestClientTileAndRestore();
+var
+  Mgr: TXCBWindowManager;
+  Client: TXCBWMClient;
+  InitialR: TXCBRect;
+begin
+  Mgr := TXCBWindowManager.Create(nil, 0);
+  try
+    Mgr.Workarea := TXCBRect.Create(0, 0, 1920, 1080);
+    Client := Mgr.ManageWindow(888);
+    Client.CurrentRect := TXCBRect.Create(150, 120, 700, 500);
+    InitialR := Client.CurrentRect;
+
+    // Tile Left
+    Client.TileLeft();
+    AssertTrue('State has wsTiledLeft', wsTiledLeft in Client.State);
+    AssertFalse('State does not have wsTiledRight', wsTiledRight in Client.State);
+    AssertEquals('Tiled Left X', 0, Client.CurrentRect.X);
+    AssertEquals('Tiled Left Width', 1920 div 2, Client.CurrentRect.Width);
+    AssertEquals('RestoredRect Width preserved', InitialR.Width, Client.RestoredRect.Width);
+    AssertEquals('RestoredRect Height preserved', InitialR.Height, Client.RestoredRect.Height);
+
+    // Restore from Tile Left
+    Client.Restore();
+    AssertFalse('State cleared wsTiledLeft', wsTiledLeft in Client.State);
+    AssertEquals('Restored X', InitialR.X, Client.CurrentRect.X);
+    AssertEquals('Restored Width', InitialR.Width, Client.CurrentRect.Width);
+    AssertEquals('Restored Height', InitialR.Height, Client.CurrentRect.Height);
+
+    // Tile Right
+    Client.TileRight();
+    AssertTrue('State has wsTiledRight', wsTiledRight in Client.State);
+    AssertEquals('Tiled Right X', 1920 div 2, Client.CurrentRect.X);
+    AssertEquals('Tiled Right Width', 1920 div 2, Client.CurrentRect.Width);
+
+    // Maximize while Tiled
+    Client.Maximize();
+    AssertTrue('State has wsMaximizedHorz', wsMaximizedHorz in Client.State);
+    AssertFalse('State cleared wsTiledRight', wsTiledRight in Client.State);
+    AssertEquals('Maximized Width', 1920, Client.CurrentRect.Width);
+    AssertEquals('RestoredRect still preserved after Maximize', InitialR.Width, Client.RestoredRect.Width);
+
+    // Restore from Maximize
+    Client.Restore();
+    AssertFalse('State cleared wsMaximizedHorz', wsMaximizedHorz in Client.State);
+    AssertEquals('Restored back to initial width', InitialR.Width, Client.CurrentRect.Width);
+    AssertEquals('Restored back to initial height', InitialR.Height, Client.CurrentRect.Height);
   finally
     Mgr.Free();
   end;
