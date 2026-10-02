@@ -401,11 +401,82 @@ begin
     AssertEquals('Drag mode none after end', Integer(dmNone), Integer(Mgr.DragMode));
     AssertNull('Drag client nil after end', Mgr.DragClient);
 
-    // Test drag resize
+    // Test drag resize (legacy dmResize)
     Mgr.BeginDrag(Client, dmResize, 420, 320);
     Mgr.UpdateDrag(450, 350); // Delta +30, +30
     AssertEquals('Resized Width', 330, Client.CurrentRect.Width);
     AssertEquals('Resized Height', 230, Client.CurrentRect.Height);
+    Mgr.EndDrag();
+
+    // Test dmResizeRight (width only)
+    Client.CurrentRect := TXCBRect.Create(100, 100, 300, 200);
+    Mgr.BeginDrag(Client, dmResizeRight, 400, 200);
+    Mgr.UpdateDrag(440, 250); // DeltaX +40, DeltaY +50 (DeltaY should be ignored)
+    AssertEquals('dmResizeRight Width', 340, Client.CurrentRect.Width);
+    AssertEquals('dmResizeRight Height unchanged', 200, Client.CurrentRect.Height);
+    AssertEquals('dmResizeRight X unchanged', 100, Client.CurrentRect.X);
+    AssertEquals('dmResizeRight Y unchanged', 100, Client.CurrentRect.Y);
+    Mgr.EndDrag();
+
+    // Test dmResizeBottom (height only)
+    Mgr.BeginDrag(Client, dmResizeBottom, 250, 300);
+    Mgr.UpdateDrag(300, 360); // DeltaX +50 (ignored), DeltaY +60
+    AssertEquals('dmResizeBottom Width unchanged', 340, Client.CurrentRect.Width);
+    AssertEquals('dmResizeBottom Height', 260, Client.CurrentRect.Height);
+    AssertEquals('dmResizeBottom X unchanged', 100, Client.CurrentRect.X);
+    AssertEquals('dmResizeBottom Y unchanged', 100, Client.CurrentRect.Y);
+    Mgr.EndDrag();
+
+    // Test dmResizeLeft (width + X moved)
+    Mgr.BeginDrag(Client, dmResizeLeft, 100, 200);
+    Mgr.UpdateDrag(70, 250); // DeltaX -30 -> Width +30, X moves to 70
+    AssertEquals('dmResizeLeft Width', 370, Client.CurrentRect.Width);
+    AssertEquals('dmResizeLeft X', 70, Client.CurrentRect.X);
+    AssertEquals('dmResizeLeft Height unchanged', 260, Client.CurrentRect.Height);
+    AssertEquals('dmResizeLeft Y unchanged', 100, Client.CurrentRect.Y);
+    Mgr.EndDrag();
+
+    // Test dmResizeTop (height + Y moved)
+    Mgr.BeginDrag(Client, dmResizeTop, 200, 100);
+    Mgr.UpdateDrag(250, 60); // DeltaY -40 -> Height +40, Y moves to 60
+    AssertEquals('dmResizeTop Height', 300, Client.CurrentRect.Height);
+    AssertEquals('dmResizeTop Y', 60, Client.CurrentRect.Y);
+    AssertEquals('dmResizeTop Width unchanged', 370, Client.CurrentRect.Width);
+    AssertEquals('dmResizeTop X unchanged', 70, Client.CurrentRect.X);
+    Mgr.EndDrag();
+
+    // Test dmResizeTopLeft (both width/height and X/Y moved)
+    Mgr.BeginDrag(Client, dmResizeTopLeft, 70, 60);
+    Mgr.UpdateDrag(90, 80); // DeltaX +20 -> Width -20, DeltaY +20 -> Height -20
+    AssertEquals('dmResizeTopLeft Width', 350, Client.CurrentRect.Width);
+    AssertEquals('dmResizeTopLeft Height', 280, Client.CurrentRect.Height);
+    AssertEquals('dmResizeTopLeft X', 90, Client.CurrentRect.X);
+    AssertEquals('dmResizeTopLeft Y', 80, Client.CurrentRect.Y);
+    Mgr.EndDrag();
+
+    // Test Tiled Right window width resize with locked height
+    Client.TileRight();
+    AssertTrue('Client is tiled right', wsTiledRight in Client.State);
+    // Initial tiled right rect is (960, 0, 960, 1080) for 1920x1080 default
+    Mgr.BeginDrag(Client, dmResizeLeft, 960, 500);
+    Mgr.UpdateDrag(860, 550); // Drag divider left by 100px; DeltaY should be locked!
+    AssertEquals('Tiled Right Width expanded', 1060, Client.CurrentRect.Width);
+    AssertEquals('Tiled Right X moved left', 860, Client.CurrentRect.X);
+    AssertEquals('Tiled Right Height locked to 1080', 1080, Client.CurrentRect.Height);
+    AssertEquals('Tiled Right Y locked to 0', 0, Client.CurrentRect.Y);
+    AssertEquals('Tiled Right right-edge pinned', 1920, Client.CurrentRect.X + Client.CurrentRect.Width);
+    Mgr.EndDrag();
+
+    // Test Tiled Left window width resize with locked height
+    Client.TileLeft();
+    AssertTrue('Client is tiled left', wsTiledLeft in Client.State);
+    // Initial tiled left rect is (0, 0, 960, 1080)
+    Mgr.BeginDrag(Client, dmResizeRight, 960, 500);
+    Mgr.UpdateDrag(800, 550); // Drag divider left by 160px; DeltaY should be locked!
+    AssertEquals('Tiled Left Width shrunk', 800, Client.CurrentRect.Width);
+    AssertEquals('Tiled Left X pinned to 0', 0, Client.CurrentRect.X);
+    AssertEquals('Tiled Left Height locked to 1080', 1080, Client.CurrentRect.Height);
+    AssertEquals('Tiled Left Y locked to 0', 0, Client.CurrentRect.Y);
     Mgr.EndDrag();
   finally
     Mgr.Free();

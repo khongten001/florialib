@@ -117,7 +117,15 @@ type
   TXCBDragMode = (
     dmNone,
     dmMove,
-    dmResize
+    dmResize,
+    dmResizeTop,
+    dmResizeBottom,
+    dmResizeLeft,
+    dmResizeRight,
+    dmResizeTopLeft,
+    dmResizeTopRight,
+    dmResizeBottomLeft,
+    dmResizeBottomRight
   );
 
   // Frame painting delegate
@@ -456,27 +464,8 @@ begin
   FManager.FActiveClient := Self;
   if FManager.Connection <> nil then
   begin
-    // Restore passive click-to-focus grab on previous client window
-    if (OldCli <> nil) and (OldCli <> Self) and (OldCli.ClientWindow <> 0) then
-    begin
+    if (OldCli <> nil) and (OldCli <> Self) then
       Exclude(OldCli.FState, wsFocused);
-      xcb_grab_button(
-        FManager.Connection,
-        0,
-        OldCli.ClientWindow,
-        XCB_EVENT_MASK_BUTTON_PRESS,
-        XCB_GRAB_MODE_SYNC,
-        XCB_GRAB_MODE_ASYNC,
-        XCB_NONE,
-        XCB_NONE,
-        XCB_BUTTON_INDEX_1,
-        XCB_MOD_MASK_ANY
-      );
-    end;
-
-    // Ungrab button 1 on active client so clicks flow directly to client widgets
-    if FClientWindow <> 0 then
-      xcb_ungrab_button(FManager.Connection, XCB_BUTTON_INDEX_1, FClientWindow, XCB_MOD_MASK_ANY);
 
     // Raise frame (or client window if direct/unparented)
     if FIsReparented and (FFrameWindow <> 0) then
@@ -2082,26 +2071,111 @@ end;
 procedure TXCBWindowManager.UpdateDrag(const ARootX, ARootY: Integer);
 var
   DeltaX, DeltaY: Integer;
-  NewW, NewH: Integer;
-  Constrained: TXCBPoint;
+  NewX, NewY, NewW, NewH: Integer;
+  MinW, MinH: Integer;
 begin
   if (FDragClient = nil) or (FDragMode = dmNone) then Exit;
 
   DeltaX := ARootX - FDragStartPointer.X;
   DeltaY := ARootY - FDragStartPointer.Y;
 
-  case FDragMode of
-    dmMove:
-      FDragClient.Move(FDragStartRect.X + DeltaX, FDragStartRect.Y + DeltaY);
+  if FDragMode = dmMove then
+  begin
+    FDragClient.Move(FDragStartRect.X + DeltaX, FDragStartRect.Y + DeltaY);
+    Exit;
+  end;
 
-    dmResize:
+  NewX := FDragStartRect.X;
+  NewY := FDragStartRect.Y;
+  NewW := FDragStartRect.Width;
+  NewH := FDragStartRect.Height;
+
+  MinW := 100;
+  MinH := 40;
+  if (FDragClient.MinSize.X > 0) and (MinW < FDragClient.MinSize.X) then
+    MinW := FDragClient.MinSize.X;
+  if (FDragClient.MinSize.Y > 0) and (MinH < FDragClient.MinSize.Y) then
+    MinH := FDragClient.MinSize.Y;
+
+  case FDragMode of
+    dmResize, dmResizeBottomRight:
     begin
       NewW := FDragStartRect.Width + DeltaX;
       NewH := FDragStartRect.Height + DeltaY;
-      Constrained := FDragClient.ConstrainSize(NewW, NewH);
-      FDragClient.Resize(Constrained.X, Constrained.Y);
+    end;
+
+    dmResizeRight:
+    begin
+      NewW := FDragStartRect.Width + DeltaX;
+    end;
+
+    dmResizeBottom:
+    begin
+      NewH := FDragStartRect.Height + DeltaY;
+    end;
+
+    dmResizeLeft:
+    begin
+      NewW := FDragStartRect.Width - DeltaX;
+    end;
+
+    dmResizeTop:
+    begin
+      NewH := FDragStartRect.Height - DeltaY;
+    end;
+
+    dmResizeTopLeft:
+    begin
+      NewW := FDragStartRect.Width - DeltaX;
+      NewH := FDragStartRect.Height - DeltaY;
+    end;
+
+    dmResizeTopRight:
+    begin
+      NewW := FDragStartRect.Width + DeltaX;
+      NewH := FDragStartRect.Height - DeltaY;
+    end;
+
+    dmResizeBottomLeft:
+    begin
+      NewW := FDragStartRect.Width - DeltaX;
+      NewH := FDragStartRect.Height + DeltaY;
     end;
   end;
+
+  // If window is in a tiled state, height and top edge are locked to full screen
+  if (wsTiledLeft in FDragClient.State) or (wsTiledRight in FDragClient.State) then
+  begin
+    NewH := FDragStartRect.Height;
+    if (wsTiledRight in FDragClient.State) and (NewW > FDragStartRect.X + FDragStartRect.Width - 50) then
+      NewW := FDragStartRect.X + FDragStartRect.Width - 50;
+    if (wsTiledLeft in FDragClient.State) and (FScreen <> nil) and (NewW > FScreen^.width_in_pixels - 50) then
+      NewW := FScreen^.width_in_pixels - 50;
+  end;
+
+  if NewW < MinW then NewW := MinW;
+  if NewH < MinH then NewH := MinH;
+  if (FDragClient.MaxSize.X > 0) and (NewW > FDragClient.MaxSize.X) then
+    NewW := FDragClient.MaxSize.X;
+  if (FDragClient.MaxSize.Y > 0) and (NewH > FDragClient.MaxSize.Y) then
+    NewH := FDragClient.MaxSize.Y;
+
+  case FDragMode of
+    dmResizeLeft, dmResizeTopLeft, dmResizeBottomLeft:
+      NewX := FDragStartRect.X + (FDragStartRect.Width - NewW);
+  end;
+
+  if not ((wsTiledLeft in FDragClient.State) or (wsTiledRight in FDragClient.State)) then
+  begin
+    case FDragMode of
+      dmResizeTop, dmResizeTopLeft, dmResizeTopRight:
+        NewY := FDragStartRect.Y + (FDragStartRect.Height - NewH);
+    end;
+  end
+  else
+    NewY := FDragStartRect.Y;
+
+  FDragClient.SetGeometry(NewX, NewY, NewW, NewH);
 end;
 
 procedure TXCBWindowManager.UpdateDragOrigin(const ARootX, ARootY: Integer; const ARect: TXCBRect);
