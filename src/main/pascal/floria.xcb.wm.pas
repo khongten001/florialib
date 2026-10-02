@@ -139,6 +139,7 @@ type
     FManager             : TXCBWindowManager;
     FClientWindow        : xcb_window_t;
     FFrameWindow         : xcb_window_t;
+    FResizeWindow        : xcb_window_t;
     FTitle               : AnsiString;
     FWindowClass         : AnsiString;
     FWindowInstance      : AnsiString;
@@ -180,6 +181,7 @@ type
 
     property ClientWindow        : xcb_window_t      read FClientWindow;
     property FrameWindow         : xcb_window_t      read FFrameWindow write FFrameWindow;
+    property ResizeWindow        : xcb_window_t      read FResizeWindow write FResizeWindow;
     property Title               : AnsiString        read FTitle write FTitle;
     property WindowClass         : AnsiString        read FWindowClass write FWindowClass;
     property WindowInstance      : AnsiString        read FWindowInstance write FWindowInstance;
@@ -272,6 +274,7 @@ type
     function FindClient(const AWindow: xcb_window_t): TXCBWMClient;
     function FindClientByClientWindow(const AWindow: xcb_window_t): TXCBWMClient;
     function FindClientByFrameWindow(const AWindow: xcb_window_t): TXCBWMClient;
+    function FindClientByResizeWindow(const AWindow: xcb_window_t): TXCBWMClient;
 
     function ProcessEvent(const AEvent: Pxcb_generic_event_t): Boolean; virtual;
     procedure Run(); virtual;
@@ -282,6 +285,7 @@ type
     procedure SetActiveClient(const AClient: TXCBWMClient);
 
     // Reparenting and framing
+    function CreateResizeWindow(const AClient: TXCBWMClient; const ARect: TXCBRect): xcb_window_t;
     procedure ReparentClient(const AClient: TXCBWMClient);
     procedure UnparentClient(const AClient: TXCBWMClient);
     procedure SendSyntheticConfigureNotify(const AClient: TXCBWMClient);
@@ -479,13 +483,18 @@ end;
 
 destructor TXCBWMClient.Destroy();
 begin
+  if (FManager <> nil) and (FManager.Connection <> nil) and (FResizeWindow <> 0) then
+  begin
+    xcb_destroy_window(FManager.Connection, FResizeWindow);
+    FResizeWindow := 0;
+  end;
   inherited Destroy();
 end;
 
 procedure TXCBWMClient.Activate();
 var
   WinToRaise: xcb_window_t;
-  Values: array[0..0] of Cardinal;
+  Values: array[0..1] of Cardinal;
   Ev: xcb_client_message_event_t;
   Data32: PCardinalArray;
   OldCli: TXCBWMClient;
@@ -508,6 +517,15 @@ begin
 
     Values[0] := XCB_STACK_MODE_ABOVE;
     xcb_configure_window(FManager.Connection, WinToRaise, XCB_CONFIG_WINDOW_STACK_MODE, @Values[0]);
+
+    if (FResizeWindow <> 0) and (WinToRaise = FFrameWindow) then
+    begin
+      Values[0] := WinToRaise;
+      Values[1] := XCB_STACK_MODE_BELOW;
+      xcb_configure_window(FManager.Connection, FResizeWindow,
+                           XCB_CONFIG_WINDOW_SIBLING or XCB_CONFIG_WINDOW_STACK_MODE,
+                           @Values[0]);
+    end;
 
     // Set input focus
     xcb_set_input_focus(FManager.Connection, XCB_INPUT_FOCUS_POINTER_ROOT, FClientWindow, XCB_CURRENT_TIME);
@@ -590,6 +608,11 @@ begin
         TargetRect := TXCBRect.Create(0, 0, 1920, 1080);
     end;
     SetGeometry(TargetRect.X, TargetRect.Y, TargetRect.Width, TargetRect.Height);
+    if (FManager.Connection <> nil) and (FResizeWindow <> 0) then
+    begin
+      xcb_unmap_window(FManager.Connection, FResizeWindow);
+      xcb_flush(FManager.Connection);
+    end;
   end;
 end;
 
@@ -682,6 +705,8 @@ begin
 end;
 
 procedure TXCBWMClient.Restore();
+var
+  Values: array[0..1] of Cardinal;
 begin
   if (wsMaximizedHorz in FState) or (wsMaximizedVert in FState) or (wsFullscreen in FState) or
      (wsTiledLeft in FState) or (wsTiledRight in FState) then
@@ -694,6 +719,20 @@ begin
 
     if (FRestoredRect.Width > 0) and (FRestoredRect.Height > 0) then
       SetGeometry(FRestoredRect.X, FRestoredRect.Y, FRestoredRect.Width, FRestoredRect.Height);
+
+    if (FManager <> nil) and (FManager.Connection <> nil) and (FResizeWindow <> 0) then
+    begin
+      xcb_map_window(FManager.Connection, FResizeWindow);
+      if FFrameWindow <> 0 then
+      begin
+        Values[0] := FFrameWindow;
+        Values[1] := XCB_STACK_MODE_BELOW;
+        xcb_configure_window(FManager.Connection, FResizeWindow,
+                             XCB_CONFIG_WINDOW_SIBLING or XCB_CONFIG_WINDOW_STACK_MODE,
+                             @Values[0]);
+      end;
+      xcb_flush(FManager.Connection);
+    end;
   end;
 end;
 
@@ -708,6 +747,8 @@ begin
     if FIsReparented and (FFrameWindow <> 0) then
       xcb_unmap_window(FManager.Connection, FFrameWindow);
     xcb_unmap_window(FManager.Connection, FClientWindow);
+    if FResizeWindow <> 0 then
+      xcb_unmap_window(FManager.Connection, FResizeWindow);
     xcb_flush(FManager.Connection);
   end;
 
@@ -742,6 +783,11 @@ begin
         H := 1080;
       end;
       SetGeometry(0, 0, W, H);
+      if (FManager.Connection <> nil) and (FResizeWindow <> 0) then
+      begin
+        xcb_unmap_window(FManager.Connection, FResizeWindow);
+        xcb_flush(FManager.Connection);
+      end;
     end;
   end
   else
@@ -804,6 +850,22 @@ begin
       XCB_CONFIG_WINDOW_WIDTH or XCB_CONFIG_WINDOW_HEIGHT,
       @Values[0]
     );
+
+    // Outer input-only resize frame geometry
+    if FResizeWindow <> 0 then
+    begin
+      Values[0] := AX - 8;
+      Values[1] := AY - 8;
+      Values[2] := AWidth + 16;
+      Values[3] := AHeight + 16;
+      xcb_configure_window(
+        FManager.Connection,
+        FResizeWindow,
+        XCB_CONFIG_WINDOW_X or XCB_CONFIG_WINDOW_Y or
+        XCB_CONFIG_WINDOW_WIDTH or XCB_CONFIG_WINDOW_HEIGHT,
+        @Values[0]
+      );
+    end;
   end
   else
   begin
@@ -1547,6 +1609,51 @@ begin
   Result := FrameWin;
 end;
 
+function TXCBWindowManager.CreateResizeWindow(const AClient: TXCBWMClient; const ARect: TXCBRect): xcb_window_t;
+var
+  ResizeWin: xcb_window_t;
+  ValueMask: Cardinal;
+  ValueList: array[0..3] of Cardinal;
+  Margin: Integer;
+begin
+  Result := 0;
+  if FConn = nil then Exit;
+
+  Margin := 8;
+  ResizeWin := xcb_generate_id(FConn);
+  ValueMask := XCB_CW_OVERRIDE_REDIRECT or XCB_CW_EVENT_MASK;
+  ValueList[0] := 1;
+  ValueList[1] := XCB_EVENT_MASK_BUTTON_PRESS or
+                  XCB_EVENT_MASK_BUTTON_RELEASE or
+                  XCB_EVENT_MASK_POINTER_MOTION or
+                  XCB_EVENT_MASK_ENTER_WINDOW or
+                  XCB_EVENT_MASK_LEAVE_WINDOW;
+
+  if FCursorNormal <> 0 then
+  begin
+    ValueMask := ValueMask or XCB_CW_CURSOR;
+    ValueList[2] := FCursorNormal;
+  end;
+
+  xcb_create_window(
+    FConn,
+    0, // depth 0 for InputOnly
+    ResizeWin,
+    FRootWindow,
+    ARect.X - Margin,
+    ARect.Y - Margin,
+    ARect.Width + (Margin * 2),
+    ARect.Height + (Margin * 2),
+    0, // border_width
+    XCB_WINDOW_CLASS_INPUT_ONLY,
+    XCB_COPY_FROM_PARENT,
+    ValueMask,
+    @ValueList[0]
+  );
+
+  Result := ResizeWin;
+end;
+
 procedure TXCBWindowManager.ReparentClient(const AClient: TXCBWMClient);
 var
   FrameRect, ClientInnerRect: TXCBRect;
@@ -1570,6 +1677,7 @@ begin
   if FrameWin = 0 then Exit;
 
   AClient.FrameWindow := FrameWin;
+  AClient.ResizeWindow := CreateResizeWindow(AClient, FrameRect);
   AClient.CurrentRect := FrameRect;
   AClient.IsReparented := True;
 
@@ -1609,6 +1717,15 @@ begin
 
   xcb_map_window(FConn, FrameWin);
   xcb_map_window(FConn, AClient.ClientWindow);
+  if AClient.ResizeWindow <> 0 then
+  begin
+    xcb_map_window(FConn, AClient.ResizeWindow);
+    Values[0] := FrameWin;
+    Values[1] := XCB_STACK_MODE_BELOW;
+    xcb_configure_window(FConn, AClient.ResizeWindow,
+                         XCB_CONFIG_WINDOW_SIBLING or XCB_CONFIG_WINDOW_STACK_MODE,
+                         @Values[0]);
+  end;
   xcb_flush(FConn);
 
   // Send synthetic ConfigureNotify per ICCCM 4.1.4
@@ -1662,6 +1779,12 @@ begin
   begin
     xcb_destroy_window(FConn, AClient.FrameWindow);
     AClient.FrameWindow := 0;
+  end;
+
+  if AClient.ResizeWindow <> 0 then
+  begin
+    xcb_destroy_window(FConn, AClient.ResizeWindow);
+    AClient.ResizeWindow := 0;
   end;
 
   AClient.IsReparented := False;
@@ -1759,7 +1882,7 @@ begin
   for I := 0 to FClients.Count - 1 do
   begin
     Cli := TXCBWMClient(FClients[I]);
-    if (Cli.ClientWindow = AWindow) or (Cli.FrameWindow = AWindow) then
+    if (Cli.ClientWindow = AWindow) or (Cli.FrameWindow = AWindow) or (Cli.ResizeWindow = AWindow) then
       Exit(Cli);
   end;
 end;
@@ -1790,6 +1913,21 @@ begin
   begin
     Cli := TXCBWMClient(FClients[I]);
     if Cli.FrameWindow = AWindow then
+      Exit(Cli);
+  end;
+end;
+
+function TXCBWindowManager.FindClientByResizeWindow(const AWindow: xcb_window_t): TXCBWMClient;
+var
+  I: Integer;
+  Cli: TXCBWMClient;
+begin
+  Result := nil;
+  if AWindow = 0 then Exit;
+  for I := 0 to FClients.Count - 1 do
+  begin
+    Cli := TXCBWMClient(FClients[I]);
+    if Cli.ResizeWindow = AWindow then
       Exit(Cli);
   end;
 end;
@@ -2115,6 +2253,8 @@ begin
         if Cli.IsReparented and (Cli.FrameWindow <> 0) then
           xcb_map_window(FConn, Cli.FrameWindow);
         xcb_map_window(FConn, Cli.ClientWindow);
+        if Cli.ResizeWindow <> 0 then
+          xcb_map_window(FConn, Cli.ResizeWindow);
       end;
     end
     else
@@ -2124,6 +2264,8 @@ begin
         if Cli.IsReparented and (Cli.FrameWindow <> 0) then
           xcb_unmap_window(FConn, Cli.FrameWindow);
         xcb_unmap_window(FConn, Cli.ClientWindow);
+        if Cli.ResizeWindow <> 0 then
+          xcb_unmap_window(FConn, Cli.ResizeWindow);
       end;
       if FActiveClient = Cli then
         FActiveClient := nil;
