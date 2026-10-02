@@ -17,6 +17,7 @@ interface
 uses
   Classes, SysUtils, Contnrs,
   Floria.XCB,
+  Floria.XCB.Cursor,
   Floria.XCB.EWMH,
   Floria.XCB.ICCCM;
 
@@ -229,8 +230,24 @@ type
     FDragStartPointer  : TXCBPoint;
     FDragStartRect     : TXCBRect;
 
+    // Cursors
+    FCursorCtx         : Pxcb_cursor_context_t;
+    FCursorNormal      : xcb_cursor_t;
+    FCursorMove        : xcb_cursor_t;
+    FCursorResizeLeft  : xcb_cursor_t;
+    FCursorResizeRight : xcb_cursor_t;
+    FCursorResizeTop   : xcb_cursor_t;
+    FCursorResizeBottom: xcb_cursor_t;
+    FCursorResizeTopLeft    : xcb_cursor_t;
+    FCursorResizeTopRight   : xcb_cursor_t;
+    FCursorResizeBottomLeft : xcb_cursor_t;
+    FCursorResizeBottomRight: xcb_cursor_t;
+    FCurrentRootCursor : xcb_cursor_t;
+
     FOnFramePaint      : TXCBFramePaintEvent;
 
+    procedure InitCursors();
+    function LoadCursor(const ANames: array of PChar): xcb_cursor_t;
     procedure RefreshEWMHClientList();
     procedure RefreshEWMHActiveWindow();
     procedure RefreshEWMHDesktop();
@@ -275,6 +292,10 @@ type
     procedure UpdateDragOrigin(const ARootX, ARootY: Integer; const ARect: TXCBRect);
     procedure EndDrag(); virtual;
 
+    // Cursors
+    function CursorForDragMode(const AMode: TXCBDragMode): xcb_cursor_t; virtual;
+    procedure SetWindowCursor(const AWindow: xcb_window_t; const ACursor: xcb_cursor_t);
+
     property Connection        : Pxcb_connection_t   read FConn;
     property Screen            : Pxcb_screen_t       read FScreen;
     property ScreenNum         : Integer             read FScreenNum;
@@ -293,6 +314,18 @@ type
     property DragClient        : TXCBWMClient        read FDragClient;
     property AtomWMDeleteWindow: xcb_atom_t          read FAtomWMDeleteWindow;
     property AtomWMTakeFocus   : xcb_atom_t          read FAtomWMTakeFocus;
+
+    property CursorNormal      : xcb_cursor_t        read FCursorNormal;
+    property CursorMove        : xcb_cursor_t        read FCursorMove;
+    property CursorResizeLeft  : xcb_cursor_t        read FCursorResizeLeft;
+    property CursorResizeRight : xcb_cursor_t        read FCursorResizeRight;
+    property CursorResizeTop   : xcb_cursor_t        read FCursorResizeTop;
+    property CursorResizeBottom: xcb_cursor_t        read FCursorResizeBottom;
+    property CursorResizeTopLeft    : xcb_cursor_t   read FCursorResizeTopLeft;
+    property CursorResizeTopRight   : xcb_cursor_t   read FCursorResizeTopRight;
+    property CursorResizeBottomLeft : xcb_cursor_t   read FCursorResizeBottomLeft;
+    property CursorResizeBottomRight: xcb_cursor_t   read FCursorResizeBottomRight;
+    property CurrentRootCursor : xcb_cursor_t        read FCurrentRootCursor write FCurrentRootCursor;
 
     property OnFramePaint      : TXCBFramePaintEvent read FOnFramePaint write FOnFramePaint;
   end;
@@ -918,6 +951,19 @@ begin
   FDragStartRect := TXCBRect.Create(0, 0, 0, 0);
   FOnFramePaint := nil;
 
+  FCursorCtx := nil;
+  FCursorNormal := 0;
+  FCursorMove := 0;
+  FCursorResizeLeft := 0;
+  FCursorResizeRight := 0;
+  FCursorResizeTop := 0;
+  FCursorResizeBottom := 0;
+  FCursorResizeTopLeft := 0;
+  FCursorResizeTopRight := 0;
+  FCursorResizeBottomLeft := 0;
+  FCursorResizeBottomRight := 0;
+  FCurrentRootCursor := 0;
+
   if FConn <> nil then
   begin
     Setup := xcb_get_setup(FConn);
@@ -939,14 +985,86 @@ begin
 
     FAtomWMDeleteWindow := InternAtom(FConn, 'WM_DELETE_WINDOW');
     FAtomWMTakeFocus := InternAtom(FConn, 'WM_TAKE_FOCUS');
+    InitCursors();
   end;
 end;
 
 destructor TXCBWindowManager.Destroy();
 begin
+  if FCursorCtx <> nil then
+  begin
+    xcb_cursor_context_free(FCursorCtx);
+    FCursorCtx := nil;
+  end;
   FClients.Free();
   FDesktopNames.Free();
   inherited Destroy();
+end;
+
+procedure TXCBWindowManager.InitCursors();
+begin
+  if (FConn = nil) or (FScreen = nil) then Exit;
+
+  FCursorCtx := nil;
+  if xcb_cursor_context_new(FConn, FScreen, @FCursorCtx) = 0 then
+  begin
+    FCursorNormal := LoadCursor(['left_ptr', 'default']);
+    FCursorMove := LoadCursor(['fleur', 'grabbing', 'move']);
+    FCursorResizeLeft := LoadCursor(['left_side', 'sb_h_double_arrow', 'w-resize', 'ew-resize']);
+    FCursorResizeRight := LoadCursor(['right_side', 'sb_h_double_arrow', 'e-resize', 'ew-resize']);
+    FCursorResizeTop := LoadCursor(['top_side', 'sb_v_double_arrow', 'n-resize', 'ns-resize']);
+    FCursorResizeBottom := LoadCursor(['bottom_side', 'sb_v_double_arrow', 's-resize', 'ns-resize']);
+    FCursorResizeTopLeft := LoadCursor(['top_left_corner', 'nw-resize', 'nwse-resize']);
+    FCursorResizeTopRight := LoadCursor(['top_right_corner', 'ne-resize', 'nesw-resize']);
+    FCursorResizeBottomLeft := LoadCursor(['bottom_left_corner', 'sw-resize', 'nesw-resize']);
+    FCursorResizeBottomRight := LoadCursor(['bottom_right_corner', 'se-resize', 'nwse-resize']);
+  end;
+end;
+
+function TXCBWindowManager.LoadCursor(const ANames: array of PChar): xcb_cursor_t;
+var
+  i: Integer;
+begin
+  Result := 0;
+  if FCursorCtx = nil then Exit;
+  for i := Low(ANames) to High(ANames) do
+  begin
+    if ANames[i] <> nil then
+    begin
+      Result := xcb_cursor_load_cursor(FCursorCtx, ANames[i]);
+      if Result <> 0 then Break;
+    end;
+  end;
+end;
+
+function TXCBWindowManager.CursorForDragMode(const AMode: TXCBDragMode): xcb_cursor_t;
+begin
+  case AMode of
+    dmMove: Result := FCursorMove;
+    dmResizeLeft: Result := FCursorResizeLeft;
+    dmResizeRight: Result := FCursorResizeRight;
+    dmResizeTop: Result := FCursorResizeTop;
+    dmResizeBottom: Result := FCursorResizeBottom;
+    dmResizeTopLeft: Result := FCursorResizeTopLeft;
+    dmResizeTopRight: Result := FCursorResizeTopRight;
+    dmResizeBottomLeft: Result := FCursorResizeBottomLeft;
+    dmResizeBottomRight: Result := FCursorResizeBottomRight;
+    dmResize: Result := FCursorResizeBottomRight;
+  else
+    Result := FCursorNormal;
+  end;
+  if Result = 0 then
+    Result := FCursorNormal;
+end;
+
+procedure TXCBWindowManager.SetWindowCursor(const AWindow: xcb_window_t; const ACursor: xcb_cursor_t);
+var
+  Values: array[0..0] of Cardinal;
+begin
+  if (FConn = nil) or (AWindow = 0) or (ACursor = 0) then Exit;
+  Values[0] := ACursor;
+  xcb_change_window_attributes(FConn, AWindow, XCB_CW_CURSOR, @Values[0]);
+  xcb_flush(FConn);
 end;
 
 function TXCBWindowManager.ClaimOwnership(): Boolean;
@@ -962,7 +1080,8 @@ begin
                XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY or
                XCB_EVENT_MASK_STRUCTURE_NOTIFY or
                XCB_EVENT_MASK_PROPERTY_CHANGE or
-               XCB_EVENT_MASK_BUTTON_PRESS;
+               XCB_EVENT_MASK_BUTTON_PRESS or
+               XCB_EVENT_MASK_POINTER_MOTION;
 
   Cookie := xcb_change_window_attributes_checked(
     FConn,
@@ -977,6 +1096,12 @@ begin
     xcb_free(Err);
     Result := False;
     Exit;
+  end;
+
+  if FCursorNormal <> 0 then
+  begin
+    SetWindowCursor(FRootWindow, FCursorNormal);
+    FCurrentRootCursor := FCursorNormal;
   end;
 
   Result := True;
@@ -1379,7 +1504,7 @@ function TXCBWindowManager.CreateFrameWindow(const AClient: TXCBWMClient; const 
 var
   FrameWin: xcb_window_t;
   ValueMask: Cardinal;
-  ValueList: array[0..2] of Cardinal;
+  ValueList: array[0..3] of Cardinal;
 begin
   Result := 0;
   if FConn = nil then Exit;
@@ -1396,6 +1521,12 @@ begin
                   XCB_EVENT_MASK_POINTER_MOTION or
                   XCB_EVENT_MASK_ENTER_WINDOW or
                   XCB_EVENT_MASK_LEAVE_WINDOW;
+
+  if FCursorNormal <> 0 then
+  begin
+    ValueMask := ValueMask or XCB_CW_CURSOR;
+    ValueList[3] := FCursorNormal;
+  end;
 
   xcb_create_window(
     FConn,
@@ -2041,6 +2172,7 @@ procedure TXCBWindowManager.BeginDrag(const AClient: TXCBWMClient; const AMode: 
 var
   Cookie: xcb_grab_pointer_cookie_t;
   Reply: Pxcb_grab_pointer_reply_t;
+  dragCursor: xcb_cursor_t;
 begin
   if (AClient = nil) or (AMode = dmNone) then Exit;
 
@@ -2048,6 +2180,9 @@ begin
   FDragMode := AMode;
   FDragStartPointer := TXCBPoint.Create(ARootX, ARootY);
   FDragStartRect := AClient.CurrentRect;
+
+  dragCursor := CursorForDragMode(AMode);
+  if dragCursor = 0 then dragCursor := XCB_NONE;
 
   if FConn <> nil then
   begin
@@ -2059,7 +2194,7 @@ begin
       XCB_GRAB_MODE_ASYNC,
       XCB_GRAB_MODE_ASYNC,
       FRootWindow,
-      XCB_NONE,
+      dragCursor,
       XCB_CURRENT_TIME
     );
     Reply := xcb_grab_pointer_reply(FConn, Cookie, nil);
