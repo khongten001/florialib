@@ -675,18 +675,18 @@ begin
   if (W <= 0) or (H <= 0) or (BlurRadius <= 0) or (effOpacity <= 0) then Exit;
   steps := Round(BlurRadius);
   if steps < 1 then steps := 1;
-  if steps > 6 then steps := 6;
+  if steps > 8 then steps := 8;
 
   for i := steps downto 1 do
   begin
     expand := i * (BlurRadius / steps);
-    curR := Radius + expand;
+    curR := Radius + (expand * 0.5);
     stepAlpha := (effOpacity / steps) * (1.0 - (i - 1) / (steps + 1));
     if stepAlpha <= 0 then Continue;
 
     C.ConstrDbl(ShadowR, ShadowG, ShadowB, stepAlpha);
-    RR.Construct(X + OffsetX - expand * 0.5, Y + OffsetY - expand * 0.25,
-                 X + OffsetX + W + expand * 0.5, Y + OffsetY + H + expand * 0.75, curR);
+    RR.Construct(X + OffsetX - expand * 0.5, Y + OffsetY - expand * 0.5,
+                 X + OffsetX + W + expand * 0.5, Y + OffsetY + H + expand * 0.5, curR);
     RR.normalize_radius();
     FRasterizer.reset();
     FRasterizer.add_path(@RR);

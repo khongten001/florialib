@@ -35,7 +35,7 @@ type
     OffsetY  : Integer;
     Opacity  : Single;
     class function Create(const AEnabled: Boolean = True; const ARadius: Integer = 12;
-                          const AOffsetY: Integer = 4; const AOpacity: Single = 0.35): TXCBWindowShadowConfig; static;
+                          const AOffsetY: Integer = 1; const AOpacity: Single = 0.22): TXCBWindowShadowConfig; static;
   end;
 
   // TXCBCompositedWindow
@@ -207,7 +207,7 @@ begin
   FFrameWindow := AFrame;
   FGeometry := AGeometry;
   FOpacity := 1.0;
-  FShadowConfig := TXCBWindowShadowConfig.Create(True, 12, 4, 0.35);
+  FShadowConfig := TXCBWindowShadowConfig.Create(True, 12, 1, 0.22);
   FHasBackdropBlur := False;
   FBlurRadius := 15;
   FCornerRadius := 10;
