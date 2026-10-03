@@ -22,3 +22,13 @@ Whenever any source file in `src/main/pascal/` is added, modified, or refactored
 - **`find_by_name` Requires `Pattern`**: In `find_by_name`, the `Pattern` property is strictly required by the tool validator schema (`required: ["SearchDirectory", "Pattern", "toolSummary", "toolAction"]`). Never omit `Pattern`, even when specifying `Extensions` or `Type`. When searching by extension or listing directory contents, always explicitly set `Pattern: "*"`.
 - **Required Metadata**: Every tool call must include both `toolSummary` (2–5 word noun phrase) and `toolAction` (2–5 word verb phrase).
 
+## Canvas & Compositor Geometry Invariants
+
+- **Symmetric AggPas Shadow Expansion**:
+  - In `TFloriaCanvasAgg.DrawShadow`, expansion must remain mathematically symmetric on all 4 boundaries:
+    `RR.Construct(X + OffsetX - expand * 0.5, Y + OffsetY - expand * 0.5, X + OffsetX + W + expand * 0.5, Y + OffsetY + H + expand * 0.5, curR)`
+    with concentric corner radius `curR := Radius + (expand * 0.5)`. Never apply hardcoded vertical expansion biases.
+- **X11 Input-Only Window Stacking**:
+  - In `floria.xcb.wm.pas`, outer resize margins over background windows are managed via an `InputOnly` window (`ResizeWindow`) parented to root and stacked immediately below `FrameWindow` (`XCB_STACK_MODE_BELOW`).
+
+
