@@ -22,8 +22,8 @@ type
 
 function xcb_key_symbols_alloc(c: Pxcb_connection_t): Pxcb_key_symbols_t; cdecl; external 'xcb-keysyms' name 'xcb_key_symbols_alloc';
 procedure xcb_key_symbols_free(syms: Pxcb_key_symbols_t); cdecl; external 'xcb-keysyms' name 'xcb_key_symbols_free';
-{ xcb_key_symbols_get_keysym: skipped — return type 'xcb_keysym_t' comes from a filtered-out header }
-{ xcb_key_symbols_get_keycode: skipped — parameter type 'xcb_keysym_t' comes from a filtered-out header }
+function xcb_key_symbols_get_keysym(syms: Pxcb_key_symbols_t; keycode: xcb_keycode_t; col: Integer): xcb_keysym_t; cdecl; external 'xcb-keysyms' name 'xcb_key_symbols_get_keysym';
+function xcb_key_symbols_get_keycode(syms: Pxcb_key_symbols_t; keysym: xcb_keysym_t): Pxcb_keycode_t; cdecl; external 'xcb-keysyms' name 'xcb_key_symbols_get_keycode';
 
 function xcb_key_press_lookup_keysym(syms: Pxcb_key_symbols_t; event: Pxcb_key_press_event_t; col: Integer): xcb_keysym_t; cdecl; external 'xcb-keysyms' name 'xcb_key_press_lookup_keysym';
 function xcb_key_release_lookup_keysym(syms: Pxcb_key_symbols_t; event: Pxcb_key_release_event_t; col: Integer): xcb_keysym_t; cdecl; external 'xcb-keysyms' name 'xcb_key_release_lookup_keysym';
