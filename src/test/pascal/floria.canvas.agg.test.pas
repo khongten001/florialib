@@ -6,7 +6,8 @@ interface
 
 uses
   Classes, SysUtils, fpcunit, testregistry,
-  Floria.Image.Core, Floria.Canvas.Agg, Floria.SVG.DOM, Floria.SVG.Parser, Floria.SVG.Rasterizer;
+  Floria.Image.Core, Floria.Canvas.Agg, Floria.SVG.DOM, Floria.SVG.Parser, Floria.SVG.Rasterizer,
+  Floria.Canvas.Blend;
 
 type
   TFloriaCanvasAggTest = class(TTestCase)
@@ -21,6 +22,8 @@ type
     procedure TestHersheyText();
     procedure TestSVGRasterizer();
     procedure TestDrawImagePremultipliedAlpha();
+    procedure TestCanvasBlendModeRect();
+    procedure TestCanvasBlendModeImage();
   end;
 
 implementation
@@ -340,6 +343,76 @@ begin
       AssertTrue('Scaled PMA Red on white background', Pix.R >= 254);
       AssertTrue('Scaled PMA Green on white background', Pix.G >= 254);
       AssertTrue('Scaled PMA Blue on white background', Pix.B >= 254);
+    finally
+      Canvas.Free();
+    end;
+  finally
+    DestImg.Free();
+    SrcImg.Free();
+  end;
+end;
+
+procedure TFloriaCanvasAggTest.TestCanvasBlendModeRect();
+var
+  Img: TFloriaImage;
+  Canvas: TFloriaCanvasAgg;
+  Pix: TBgraPixel;
+begin
+  Img := TFloriaImage.Create(30, 30);
+  try
+    Canvas := TFloriaCanvasAgg.Create(Img);
+    try
+      Canvas.Clear(0.0, 0.0, 0.0); // Black
+
+      // Draw green rect
+      Canvas.DrawRect(5, 5, 20, 20, 0.0, 1.0, 0.0);
+
+      // Set blend mode to Plus (additive)
+      Canvas.BlendMode := fbmPlus;
+      AssertEquals('BlendMode property', Ord(fbmPlus), Ord(Canvas.BlendMode));
+
+      // Draw red rect overlapping green rect -> Additive: Red + Green = Yellow
+      Canvas.DrawRect(5, 5, 20, 20, 1.0, 0.0, 0.0);
+
+      Pix := Img.Pixels[10, 10];
+      AssertEquals('Additive Red', 255, Pix.R);
+      AssertEquals('Additive Green', 255, Pix.G);
+      AssertEquals('Additive Blue', 0, Pix.B);
+      AssertEquals('Additive Alpha', 255, Pix.A);
+
+      // Restore to SrcOver
+      Canvas.BlendMode := fbmSrcOver;
+      AssertEquals('Restored BlendMode', Ord(fbmSrcOver), Ord(Canvas.BlendMode));
+    finally
+      Canvas.Free();
+    end;
+  finally
+    Img.Free();
+  end;
+end;
+
+procedure TFloriaCanvasAggTest.TestCanvasBlendModeImage();
+var
+  DestImg, SrcImg: TFloriaImage;
+  Canvas: TFloriaCanvasAgg;
+  Pix: TBgraPixel;
+begin
+  DestImg := TFloriaImage.Create(30, 30);
+  SrcImg := TFloriaImage.Create(20, 20);
+  try
+    DestImg.Clear(0, 255, 0, 255); // Green
+    SrcImg.Clear(255, 0, 0, 255);  // Red
+
+    Canvas := TFloriaCanvasAgg.Create(DestImg);
+    try
+      Canvas.BlendMode := fbmPlus;
+      Canvas.DrawImage(5, 5, SrcImg);
+
+      Pix := DestImg.Pixels[10, 10];
+      AssertEquals('Image Plus Red', 255, Pix.R);
+      AssertEquals('Image Plus Green', 255, Pix.G);
+      AssertEquals('Image Plus Blue', 0, Pix.B);
+      AssertEquals('Image Plus Alpha', 255, Pix.A);
     finally
       Canvas.Free();
     end;

@@ -19,6 +19,7 @@ uses
   Floria.Image.Test,
   Floria.Image.Blur.Test,
   Floria.Canvas.Agg.Test,
+  Floria.Canvas.Blend.Test,
   Floria.Unicode.BiDi.Test,
   Floria.Text.HarfBuzz.Test,
   Floria.EGL.Test,

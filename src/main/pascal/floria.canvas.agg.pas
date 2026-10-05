@@ -48,7 +48,8 @@ uses
   Floria.Font,
   Floria.Image.Core,
   Floria.Image.Blur,
-  Floria.Unicode.BiDi;
+  Floria.Unicode.BiDi,
+  Floria.Canvas.Blend;
 
 type
   TFtClipRect = record
@@ -84,6 +85,8 @@ type
     FAlphaStack           : array[0..63] of Double;
     FAlphaStackCount      : Integer;
     FCurrentAlpha         : Double;
+    FBlendMode            : TFloriaBlendMode;
+    procedure SetBlendMode(AMode: TFloriaBlendMode);
     procedure DrawTextHershey(X, Y: Double; const AText: string; ASize: Double; R, G, B: Double);
     procedure DrawTextCenteredHershey(X, Y, W, H: Integer; const AText: string; ASize: Double; R, G, B: Double);
   public
@@ -150,6 +153,7 @@ type
     property Width : Integer read FWidth;
     property Height: Integer read FHeight;
     property Buffer: Pointer read FBuffer;
+    property BlendMode: TFloriaBlendMode read FBlendMode write SetBlendMode;
   end;
 
   // Backward-compatibility alias
@@ -179,6 +183,7 @@ begin
   FRoundedClipStackCount := 0;
   FAlphaStackCount := 0;
   FCurrentAlpha := 1.0;
+  FBlendMode := fbmSrcOver;
 end;
 
 constructor TFloriaCanvasAgg.Create(AImage: TFloriaImage);
@@ -212,6 +217,32 @@ begin
   ResetAllClipping();
   FAlphaStackCount := 0;
   FCurrentAlpha := 1.0;
+  FBlendMode := fbmSrcOver;
+end;
+
+procedure TFloriaCanvasAgg.SetBlendMode(AMode: TFloriaBlendMode);
+var
+  clipBox: rect;
+  hasClip: Boolean;
+begin
+  if FBlendMode = AMode then Exit;
+  FBlendMode := AMode;
+
+  hasClip := (FClipStackCount > 0);
+  if hasClip then
+    clipBox := FRendererBase._clip_box()^;
+
+  if FBlendMode = fbmSrcOver then
+    pixfmt_bgra32(FPixFormat, @FRenderingBuf)
+  else
+  begin
+    pixfmt_custom_blend_rgba(FPixFormat, @FRenderingBuf, @FloriaAggBlendAdaptor, bgra_order);
+    FPixFormat.comp_op_(Ord(FBlendMode));
+  end;
+  FRendererBase.Construct(@FPixFormat);
+
+  if hasClip then
+    FRendererBase.clip_box_(clipBox.x1, clipBox.y1, clipBox.x2, clipBox.y2);
 end;
 
 procedure TFloriaCanvasAgg.Resize(AImage: TFloriaImage);
@@ -986,6 +1017,7 @@ var
   invA, dstB, dstG, dstR, dstA: Integer;
   globalAlpha: Integer;
   nb, ng, nr, na: Integer;
+  srcPix: TBlendPixel;
 begin
   if not Assigned(AImage) or (AImage.Width <= 0) or (AImage.Height <= 0) or (AImage.PixelBuffer = nil) then Exit;
   effOpacity := AOpacity * FCurrentAlpha;
@@ -994,7 +1026,7 @@ begin
   dstX := Round(X);
   dstY := Round(Y);
 
-  if not AImage.IsPremultiplied then
+  if (FBlendMode = fbmSrcOver) and not AImage.IsPremultiplied then
   begin
     if effOpacity >= 1.0 then
       cover := 255
@@ -1050,42 +1082,63 @@ begin
         g := srcRow[1];
         r := srcRow[2];
 
-        if globalAlpha < 255 then
+        if FBlendMode <> fbmSrcOver then
         begin
-          b := (b * globalAlpha) shr 8;
-          g := (g * globalAlpha) shr 8;
-          r := (r * globalAlpha) shr 8;
-          a := (a * globalAlpha) shr 8;
-        end;
-
-        if a >= 255 then
-        begin
-          dstRow[0] := b;
-          dstRow[1] := g;
-          dstRow[2] := r;
-          dstRow[3] := 255;
+          if not AImage.IsPremultiplied then
+          begin
+            srcPix.R := (r * a + 255) shr 8;
+            srcPix.G := (g * a + 255) shr 8;
+            srcPix.B := (b * a + 255) shr 8;
+            srcPix.A := a;
+          end
+          else
+          begin
+            srcPix.R := r;
+            srcPix.G := g;
+            srcPix.B := b;
+            srcPix.A := a;
+          end;
+          FloriaBlendPixel(PBlendPixel(dstRow), srcPix, FBlendMode, globalAlpha);
         end
         else
         begin
-          invA := 255 - a;
-          dstB := dstRow[0];
-          dstG := dstRow[1];
-          dstR := dstRow[2];
-          dstA := dstRow[3];
+          if globalAlpha < 255 then
+          begin
+            b := (b * globalAlpha) shr 8;
+            g := (g * globalAlpha) shr 8;
+            r := (r * globalAlpha) shr 8;
+            a := (a * globalAlpha) shr 8;
+          end;
 
-          nb := b + ((dstB * invA + 128) shr 8);
-          if nb > 255 then nb := 255;
-          ng := g + ((dstG * invA + 128) shr 8);
-          if ng > 255 then ng := 255;
-          nr := r + ((dstR * invA + 128) shr 8);
-          if nr > 255 then nr := 255;
-          na := a + ((dstA * invA + 128) shr 8);
-          if na > 255 then na := 255;
+          if a >= 255 then
+          begin
+            dstRow[0] := b;
+            dstRow[1] := g;
+            dstRow[2] := r;
+            dstRow[3] := 255;
+          end
+          else
+          begin
+            invA := 255 - a;
+            dstB := dstRow[0];
+            dstG := dstRow[1];
+            dstR := dstRow[2];
+            dstA := dstRow[3];
 
-          dstRow[0] := nb;
-          dstRow[1] := ng;
-          dstRow[2] := nr;
-          dstRow[3] := na;
+            nb := b + ((dstB * invA + 128) shr 8);
+            if nb > 255 then nb := 255;
+            ng := g + ((dstG * invA + 128) shr 8);
+            if ng > 255 then ng := 255;
+            nr := r + ((dstR * invA + 128) shr 8);
+            if nr > 255 then nr := 255;
+            na := a + ((dstA * invA + 128) shr 8);
+            if na > 255 then na := 255;
+
+            dstRow[0] := nb;
+            dstRow[1] := ng;
+            dstRow[2] := nr;
+            dstRow[3] := na;
+          end;
         end;
       end;
 
@@ -1113,6 +1166,7 @@ var
   srcX0_fp, srcY0_fp: Int64;
   effOpacity: Double;
   nb, ng, nr: Integer;
+  srcPix: TBlendPixel;
 begin
   if not Assigned(AImage) or (AImage.Width <= 0) or (AImage.Height <= 0) or (AImage.PixelBuffer = nil) then Exit;
   effOpacity := AOpacity * FCurrentAlpha;
@@ -1227,7 +1281,25 @@ begin
 
       if a > 0 then
       begin
-        if a >= 255 then
+        if FBlendMode <> fbmSrcOver then
+        begin
+          if not AImage.IsPremultiplied then
+          begin
+            srcPix.R := (r * a + 255) shr 8;
+            srcPix.G := (g * a + 255) shr 8;
+            srcPix.B := (b * a + 255) shr 8;
+            srcPix.A := a;
+          end
+          else
+          begin
+            srcPix.R := r;
+            srcPix.G := g;
+            srcPix.B := b;
+            srcPix.A := a;
+          end;
+          FloriaBlendPixel(PBlendPixel(dstRow), srcPix, FBlendMode, 255);
+        end
+        else if a >= 255 then
         begin
           dstRow[0] := b;
           dstRow[1] := g;

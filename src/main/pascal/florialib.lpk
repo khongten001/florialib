@@ -185,6 +185,10 @@
         <Filename Value="floria.xcb.wm.compositor.pas"/>
         <UnitName Value="Floria.XCB.WM.Compositor"/>
       </Item>
+      <Item>
+        <Filename Value="floria.canvas.blend.pas"/>
+        <UnitName Value="Floria.Canvas.Blend"/>
+      </Item>
     </Files>
     <RequiredPkgs>
       <Item>
