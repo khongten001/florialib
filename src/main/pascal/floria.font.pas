@@ -84,6 +84,7 @@ type
     FFontGamma               : Double;
     FDynamicLatinSwap        : Boolean;
     FFallbackFamilies        : TStringList;
+    FResolvedFiles           : TStringList;
     function DetectScreenDPI(): Double;
     function DetectSystemFontDesc(): string;
     function DetectFallbackFontFamily(): string;
@@ -500,6 +501,7 @@ var
 begin
   inherited Create();
   FCache := TFPList.Create();
+  FResolvedFiles := TStringList.Create();
   FScreenDPI := DetectScreenDPI();
   FDefaultFontDesc := DetectSystemFontDesc();
   FSystemFont := nil;
@@ -529,6 +531,12 @@ begin
   begin
     FFallbackFamilies.Free();
     FFallbackFamilies := nil;
+  end;
+
+  if Assigned(FResolvedFiles) then
+  begin
+    FResolvedFiles.Free();
+    FResolvedFiles := nil;
   end;
 
   for i := 0 to FCache.Count - 1 do
@@ -747,6 +755,28 @@ begin
   if ABold then Pattern := Pattern + ':bold';
   if AItalic then Pattern := Pattern + ':italic';
 
+  // Fast check in memory cache
+  if Assigned(FResolvedFiles) then
+  begin
+    outPath := FResolvedFiles.Values[Pattern];
+    if outPath <> '' then
+    begin
+      colonPos := FindLastChar(outPath, ':');
+      if colonPos > 0 then
+      begin
+        idxStr := Copy(outPath, colonPos + 1, Length(outPath));
+        filePath := Copy(outPath, 1, colonPos - 1);
+        if TryStrToInt(idxStr, valIdx) and (valIdx >= 0) then
+          AFaceIndex := Cardinal(valIdx)
+        else
+          AFaceIndex := 0;
+        Exit(filePath);
+      end
+      else
+        Exit(outPath);
+    end;
+  end;
+
   // Query fontconfig
   if RunCommand('fc-match', ['-f', '%{file}:%{index}', Pattern], outPath) then
   begin
@@ -764,13 +794,21 @@ begin
     end;
 
     if (outPath <> '') and FileExists(outPath) then
+    begin
+      if Assigned(FResolvedFiles) then
+        FResolvedFiles.Values[Pattern] := outPath + ':' + IntToStr(AFaceIndex);
       Exit(outPath);
+    end;
   end;
 
   // Fallback to standard directories
   for i := Low(StandardDirs) to High(StandardDirs) do
     if FileExists(StandardDirs[i]) then
+    begin
+      if Assigned(FResolvedFiles) then
+        FResolvedFiles.Values[Pattern] := StandardDirs[i] + ':0';
       Exit(StandardDirs[i]);
+    end;
 end;
 
 function TFloriaFontManager.DetectFallbackFontFamily(): string;
@@ -930,10 +968,23 @@ begin
     Exit(GetSystemFont());
 
   ParseFontDesc(AFontDesc, Fam, Sz, B, It);
+
+  // 1. Fast-path cache lookup by parsed font properties (0 ms, avoids process spawns)
+  for i := 0 to FCache.Count - 1 do
+  begin
+    NewFont := TFloriaFont(FCache[i]);
+    if SameText(NewFont.FamilyName, Fam) and
+       (Abs(NewFont.Size - Sz) < 0.001) and
+       (NewFont.Bold = B) and
+       (NewFont.Italic = It) and
+       (Abs(NewFont.DPI - FScreenDPI) < 0.1) then
+      Exit(NewFont);
+  end;
+
   FontPath := ResolveFontFile(Fam, B, It, FaceIdx);
   CanonKey := BuildCanonicalDesc(Fam, Sz, B, It, FaceIdx);
 
-  // Search cache
+  // 2. Search cache by canonical key in case family alias matched
   for i := 0 to FCache.Count - 1 do
   begin
     NewFont := TFloriaFont(FCache[i]);
