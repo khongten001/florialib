@@ -67,6 +67,8 @@ type
     procedure DrawText(X, Y: Double; const AText: string; AFont: TFloriaFont; R, G, B: Double); virtual; abstract; overload;
     procedure DrawTextCentered(X, Y, W, H: Integer; const AText: string; AFont: TFloriaFont; R, G, B: Double); virtual; abstract; overload;
     procedure DrawTextLeft(X, Y, W, H: Double; const AText: string; AFont: TFloriaFont; R, G, B: Double); virtual; abstract;
+    procedure DrawTextRotated(X, Y: Double; const AText: string; AFont: TFloriaFont; AngleDeg: Double; R, G, B: Double); virtual; overload;
+    procedure DrawTextRotated(X, Y: Double; const AText: string; ASize: Double; AngleDeg: Double; R, G, B: Double); virtual; overload;
 
     procedure DrawCheckMark(CX, CY: Double; R, G, B: Double; A: Double = 1.0); virtual; abstract;
     procedure DrawSubMenuArrow(CX, CY: Double; R, G, B: Double; A: Double = 1.0); virtual; abstract;
@@ -183,6 +185,19 @@ var
 begin
   f := FloriaFontManager().GetFont('Sans-' + FloatToStr(ASize));
   DrawTextCentered(X, Y, W, H, AText, f, R, G, B);
+end;
+
+procedure TFloriaCanvas.DrawTextRotated(X, Y: Double; const AText: string; AFont: TFloriaFont; AngleDeg: Double; R, G, B: Double);
+begin
+  DrawText(X, Y, AText, AFont, R, G, B);
+end;
+
+procedure TFloriaCanvas.DrawTextRotated(X, Y: Double; const AText: string; ASize: Double; AngleDeg: Double; R, G, B: Double);
+var
+  f: TFloriaFont;
+begin
+  f := FloriaFontManager().GetFont('Sans-' + FloatToStr(ASize));
+  DrawTextRotated(X, Y, AText, f, AngleDeg, R, G, B);
 end;
 
 end.

@@ -86,6 +86,7 @@ type
     procedure OnDrawBorder(const ARect: TRectD; const AParams: TFloriaBorderParams); override;
     procedure OnDrawLinearGradient(const ARect: TRectD; const AP1, AP2: TPointD; const AStops: TFloriaGradientStopArray); override;
     procedure OnDrawText(const AText: string; AX, AY: Double; AFont: TFloriaFont; AFontSize: Double; const AColor: TBgraPixel); override;
+    procedure OnDrawTextRotated(const AText: string; AX, AY: Double; AFont: TFloriaFont; AFontSize: Double; AAngleDeg: Double; const AColor: TBgraPixel);
     procedure OnDrawParagraph(AParagraph: TFloriaParagraph; AX, AY: Double); override;
     procedure OnDrawImage(AImage: TFloriaImage; const ADstRect, ASrcRect: TRectD; AOpacity: Double); override;
     procedure OnDrawPicture(APicture: TFloriaPicture; AX, AY: Double); override;
@@ -469,6 +470,44 @@ begin
 
     FBatch.EmitGlyphRect(DstRect, TexRect, Page.TextureID,
                          AColor, FCurrentAlpha, FBlendMode, FClipChain.CurrentNode);
+  end;
+end;
+
+procedure TFloriaGPURenderer.OnDrawTextRotated(const AText: string; AX, AY: Double; AFont: TFloriaFont; AFontSize: Double; AAngleDeg: Double; const AColor: TBgraPixel);
+var
+  Alloc: TFloriaAtlasAlloc;
+  DstRect, TexRect: TRectD;
+  Font: TFloriaFont;
+  Page: TFloriaAtlasPage;
+begin
+  if (AText = '') or (AColor.A = 0) then Exit;
+  Font := AFont;
+  if not Assigned(Font) then Font := FloriaGetSystemFont();
+
+  if Abs(AAngleDeg) < 0.001 then
+  begin
+    OnDrawText(AText, AX, AY, Font, AFontSize, AColor);
+    Exit;
+  end;
+
+  if FAtlas.RasterizeText(AText, Font, Alloc) then
+  begin
+    Page := FAtlas.Pages[Alloc.PageIndex];
+    if (Page.TextureID = 0) and FGL.Available then
+      Page.SyncToGPU(FGL);
+
+    TexRect.Left   := Alloc.U1;
+    TexRect.Top    := Alloc.V1;
+    TexRect.Right  := Alloc.U2;
+    TexRect.Bottom := Alloc.V2;
+
+    DstRect.Left   := Round(AX - 2.0);
+    DstRect.Top    := Round(AY) - Round(Font.Ascent) - 2.0;
+    DstRect.Right  := DstRect.Left + Alloc.Rect.Width;
+    DstRect.Bottom := DstRect.Top + Alloc.Rect.Height;
+
+    FBatch.EmitGlyphRectRotated(DstRect, TexRect, AX, AY, AAngleDeg, Page.TextureID,
+                                AColor, FCurrentAlpha, FBlendMode, FClipChain.CurrentNode);
   end;
 end;
 

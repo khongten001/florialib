@@ -84,6 +84,8 @@ type
     procedure DrawText(X, Y: Double; const AText: string; AFont: TFloriaFont; R, G, B: Double); override; overload;
     procedure DrawTextCentered(X, Y, W, H: Integer; const AText: string; AFont: TFloriaFont; R, G, B: Double); override; overload;
     procedure DrawTextLeft(X, Y, W, H: Double; const AText: string; AFont: TFloriaFont; R, G, B: Double); override;
+    procedure DrawTextRotated(X, Y: Double; const AText: string; AFont: TFloriaFont; AngleDeg: Double; R, G, B: Double); override; overload;
+    procedure DrawTextRotated(X, Y: Double; const AText: string; ASize: Double; AngleDeg: Double; R, G, B: Double); override; overload;
 
     procedure DrawCheckMark(CX, CY: Double; R, G, B: Double; A: Double = 1.0); override;
     procedure DrawSubMenuArrow(CX, CY: Double; R, G, B: Double; A: Double = 1.0); override;
@@ -643,6 +645,30 @@ begin
   font := AFont;
   if not Assigned(font) then font := FloriaGetSystemFont();
   DrawText(Round(X), Round(Y + (H / 2.0) + (font.Ascent - font.Descent) / 2.0), AText, font, R, G, B);
+end;
+
+procedure TFloriaCanvasGL.DrawTextRotated(X, Y: Double; const AText: string; AFont: TFloriaFont; AngleDeg: Double; R, G, B: Double);
+var
+  col: TBgraPixel;
+  font: TFloriaFont;
+begin
+  if (AText = '') or (FCurrentAlpha <= 0.0) then Exit;
+  font := AFont;
+  if not Assigned(font) then font := FloriaGetSystemFont();
+  col := BgraPixel(Round(EnsureRange(R, 0.0, 1.0) * 255.0),
+                   Round(EnsureRange(G, 0.0, 1.0) * 255.0),
+                   Round(EnsureRange(B, 0.0, 1.0) * 255.0),
+                   Round(EnsureRange(FCurrentAlpha, 0.0, 1.0) * 255.0));
+  if Assigned(FRenderer) then
+    FRenderer.OnDrawTextRotated(AText, X, Y, font, font.Size, AngleDeg, col);
+end;
+
+procedure TFloriaCanvasGL.DrawTextRotated(X, Y: Double; const AText: string; ASize: Double; AngleDeg: Double; R, G, B: Double);
+var
+  f: TFloriaFont;
+begin
+  f := FloriaFontManager().GetFont(Format('sans-serif,%.1f', [ASize]));
+  DrawTextRotated(X, Y, AText, f, AngleDeg, R, G, B);
 end;
 
 procedure TFloriaCanvasGL.DrawCheckMark(CX, CY: Double; R, G, B: Double; A: Double);

@@ -119,6 +119,8 @@ type
     procedure DrawText(X, Y: Double; const AText: string; AFont: TFloriaFont; R, G, B: Double); override; overload;
     procedure DrawTextCentered(X, Y, W, H: Integer; const AText: string; AFont: TFloriaFont; R, G, B: Double); override; overload;
     procedure DrawTextLeft(X, Y, W, H: Double; const AText: string; AFont: TFloriaFont; R, G, B: Double); override;
+    procedure DrawTextRotated(X, Y: Double; const AText: string; AFont: TFloriaFont; AngleDeg: Double; R, G, B: Double); override; overload;
+    procedure DrawTextRotated(X, Y: Double; const AText: string; ASize: Double; AngleDeg: Double; R, G, B: Double); override; overload;
 
     procedure DrawCheckMark(CX, CY: Double; R, G, B: Double; A: Double = 1.0); override;
     procedure DrawSubMenuArrow(CX, CY: Double; R, G, B: Double; A: Double = 1.0); override;
@@ -1037,6 +1039,86 @@ begin
   if Assigned(F) and (Abs(F.Size - ASize) > 0.5) then
     F := FloriaFontManager().GetFont(Format('%s-%.1f', [F.FamilyName, ASize]));
   DrawTextCentered(X, Y, W, H, AText, F, R, G, B);
+end;
+
+procedure TFloriaCanvasAgg.DrawTextRotated(X, Y: Double; const AText: string; AFont: TFloriaFont; AngleDeg: Double; R, G, B: Double);
+var
+  actualFont: TFloriaFont;
+  tw, th: Integer;
+  tempImg, rotImg: TFloriaImage;
+  tempCanvas: TFloriaCanvasAgg;
+  sx, sy, dx, dy: Integer;
+  srcPix: PBgraPixel;
+  dstPix: PBgraPixel;
+  ascent: Double;
+  dstX, dstY: Integer;
+begin
+  if (AText = '') or (FCurrentAlpha <= 0.0) then Exit;
+  if Abs(AngleDeg) < 0.001 then
+  begin
+    DrawText(X, Y, AText, AFont, R, G, B);
+    Exit;
+  end;
+
+  actualFont := AFont;
+  if not Assigned(actualFont) then actualFont := FloriaGetSystemFont();
+  if not Assigned(actualFont) then Exit;
+
+  tw := Ceil(actualFont.GetTextWidth(AText)) + 4;
+  th := Ceil(actualFont.Height) + 4;
+  if (tw <= 4) or (th <= 4) then Exit;
+
+  ascent := actualFont.Ascent;
+
+  // Render horizontal text on temporary buffer
+  tempImg := TFloriaImage.Create(tw, th, fpfBGRA32);
+  try
+    tempImg.Clear(0, 0, 0, 0);
+    tempCanvas := TFloriaCanvasAgg.Create(tempImg);
+    try
+      tempCanvas.DrawText(2.0, Round(ascent) + 2.0, AText, actualFont, R, G, B);
+    finally
+      tempCanvas.Free();
+    end;
+
+    // For 90 degrees CCW (AngleDeg in [-90.0, 270.0])
+    rotImg := TFloriaImage.Create(th, tw, fpfBGRA32);
+    try
+      rotImg.Clear(0, 0, 0, 0);
+      for sy := 0 to th - 1 do
+        for sx := 0 to tw - 1 do
+        begin
+          srcPix := PBgraPixel(PByte(tempImg.PixelBuffer) + (sy * tempImg.Stride) + (sx * 4));
+          if srcPix^.A > 0 then
+          begin
+            // 90 deg CCW in screen space (Y down): (sx, sy) -> dx = sy, dy = tw - 1 - sx
+            dx := sy;
+            dy := (tw - 1) - sx;
+            dstPix := PBgraPixel(PByte(rotImg.PixelBuffer) + (dy * rotImg.Stride) + (dx * 4));
+            dstPix^ := srcPix^;
+          end;
+        end;
+
+      // Align pivot (2.0, Round(ascent) + 2.0) with (X, Y)
+      dstX := Round(X - (Round(ascent) + 2.0));
+      dstY := Round(Y - (tw - 3));
+      DrawImage(dstX, dstY, rotImg, 1.0);
+    finally
+      rotImg.Free();
+    end;
+  finally
+    tempImg.Free();
+  end;
+end;
+
+procedure TFloriaCanvasAgg.DrawTextRotated(X, Y: Double; const AText: string; ASize: Double; AngleDeg: Double; R, G, B: Double);
+var
+  F: TFloriaFont;
+begin
+  F := FloriaGetSystemFont();
+  if Assigned(F) and (Abs(F.Size - ASize) > 0.5) then
+    F := FloriaFontManager().GetFont(Format('%s-%.1f', [F.FamilyName, ASize]));
+  DrawTextRotated(X, Y, AText, F, AngleDeg, R, G, B);
 end;
 
 procedure TFloriaCanvasAgg.DrawImage(X, Y: Double; AImage: TFloriaImage; AOpacity: Double = 1.0);

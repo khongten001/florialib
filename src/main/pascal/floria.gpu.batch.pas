@@ -112,6 +112,12 @@ type
                             const AColor: TBgraPixel; AOpacity: Double = 1.0;
                             ABlendMode: TFloriaBlendMode = fbmSrcOver; AClipIndex: Integer = -1);
 
+    procedure EmitGlyphRectRotated(const ARect, ATexRect: TRectD;
+                                   PivotX, PivotY, AAngleDeg: Double;
+                                   ATextureID: Cardinal;
+                                   const AColor: TBgraPixel; AOpacity: Double = 1.0;
+                                   ABlendMode: TFloriaBlendMode = fbmSrcOver; AClipIndex: Integer = -1);
+
     procedure EmitRoundedRect(const ARect: TRectD; const ARadii: TFloriaClipCornerRadii;
                              const AFillColor: TBgraPixel; const ABorderColor: TBgraPixel;
                              ABorderWidth: Double = 0.0; ABlendMode: TFloriaBlendMode = fbmSrcOver;
@@ -374,6 +380,86 @@ begin
   V[2].TexU := ATexRect.Right; V[2].TexV := ATexRect.Bottom;
   // Bottom-Left
   V[3].PosX := ARect.Left;  V[3].PosY := ARect.Bottom;
+  V[3].TexU := ATexRect.Left; V[3].TexV := ATexRect.Bottom;
+
+  if CanMergeWithCurrent(gbtTexturedQuad, ATextureID, ABlendMode, AClipIndex) then
+    Inc(FDrawCalls[FDrawCallCount - 1].VertexCount, 6)
+  else
+  begin
+    EnsureDrawCallCapacity();
+    with FDrawCalls[FDrawCallCount] do
+    begin
+      BatchType   := gbtTexturedQuad;
+      TextureID   := ATextureID;
+      BlendMode   := ABlendMode;
+      ClipIndex   := AClipIndex;
+      StartIndex  := FVertexCount;
+      VertexCount := 6;
+    end;
+    Inc(FDrawCallCount);
+  end;
+
+  AppendQuadVertices(V[0], V[1], V[2], V[3]);
+end;
+
+procedure TFloriaRenderBatch.EmitGlyphRectRotated(const ARect, ATexRect: TRectD;
+                                                  PivotX, PivotY, AAngleDeg: Double;
+                                                  ATextureID: Cardinal;
+                                                  const AColor: TBgraPixel; AOpacity: Double = 1.0;
+                                                  ABlendMode: TFloriaBlendMode = fbmSrcOver; AClipIndex: Integer = -1);
+var
+  V: array[0..3] of TFloriaGPUVertex;
+  I: Integer;
+  rad, cosA, sinA: Double;
+  function RotatePt(const px, py: Double): TPointD;
+  var
+    dx, dy: Double;
+  begin
+    dx := px - PivotX;
+    dy := py - PivotY;
+    Result.X := PivotX + (dx * cosA - dy * sinA);
+    Result.Y := PivotY + (dx * sinA + dy * cosA);
+  end;
+var
+  P0, P1, P2, P3: TPointD;
+begin
+  if ARect.IsEmpty then Exit;
+
+  rad := DegToRad(AAngleDeg);
+  cosA := Cos(rad);
+  sinA := Sin(rad);
+
+  P0 := RotatePt(ARect.Left, ARect.Top);
+  P1 := RotatePt(ARect.Right, ARect.Top);
+  P2 := RotatePt(ARect.Right, ARect.Bottom);
+  P3 := RotatePt(ARect.Left, ARect.Bottom);
+
+  FillChar(V, SizeOf(V), 0);
+  for I := 0 to 3 do
+  begin
+    V[I].ColorR      := AColor.R / 255.0;
+    V[I].ColorG      := AColor.G / 255.0;
+    V[I].ColorB      := AColor.B / 255.0;
+    V[I].ColorA      := (AColor.A / 255.0) * AOpacity;
+    V[I].LocalX      := ARect.Left;
+    V[I].LocalY      := ARect.Top;
+    V[I].LocalW      := ARect.Width;
+    V[I].LocalH      := ARect.Height;
+    V[I].ClipIndex   := AClipIndex;
+    V[I].ExtraParam1 := 1.0; // 1.0 = Glyph mask mode in shader
+  end;
+
+  // Top-Left
+  V[0].PosX := P0.X;  V[0].PosY := P0.Y;
+  V[0].TexU := ATexRect.Left; V[0].TexV := ATexRect.Top;
+  // Top-Right
+  V[1].PosX := P1.X;  V[1].PosY := P1.Y;
+  V[1].TexU := ATexRect.Right; V[1].TexV := ATexRect.Top;
+  // Bottom-Right
+  V[2].PosX := P2.X;  V[2].PosY := P2.Y;
+  V[2].TexU := ATexRect.Right; V[2].TexV := ATexRect.Bottom;
+  // Bottom-Left
+  V[3].PosX := P3.X;  V[3].PosY := P3.Y;
   V[3].TexU := ATexRect.Left; V[3].TexV := ATexRect.Bottom;
 
   if CanMergeWithCurrent(gbtTexturedQuad, ATextureID, ABlendMode, AClipIndex) then
