@@ -479,6 +479,7 @@ var
   DstRect, TexRect: TRectD;
   Font: TFloriaFont;
   Page: TFloriaAtlasPage;
+  PivX, PivY: Double;
 begin
   if (AText = '') or (AColor.A = 0) then Exit;
   Font := AFont;
@@ -501,12 +502,15 @@ begin
     TexRect.Right  := Alloc.U2;
     TexRect.Bottom := Alloc.V2;
 
-    DstRect.Left   := Round(AX - 2.0);
-    DstRect.Top    := Round(AY) - Round(Font.Ascent) - 2.0;
+    PivX := Round(AX);
+    PivY := Round(AY);
+
+    DstRect.Left   := PivX - 2.0;
+    DstRect.Top    := PivY - Round(Font.Ascent) - 2.0;
     DstRect.Right  := DstRect.Left + Alloc.Rect.Width;
     DstRect.Bottom := DstRect.Top + Alloc.Rect.Height;
 
-    FBatch.EmitGlyphRectRotated(DstRect, TexRect, AX, AY, AAngleDeg, Page.TextureID,
+    FBatch.EmitGlyphRectRotated(DstRect, TexRect, PivX, PivY, AAngleDeg, Page.TextureID,
                                 AColor, FCurrentAlpha, FBlendMode, FClipChain.CurrentNode);
   end;
 end;

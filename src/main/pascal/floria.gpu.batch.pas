@@ -425,9 +425,33 @@ var
 begin
   if ARect.IsEmpty then Exit;
 
-  rad := DegToRad(AAngleDeg);
-  cosA := Cos(rad);
-  sinA := Sin(rad);
+  // Fast-path exact orthogonal angles to eliminate floating point epsilon
+  if Abs(AAngleDeg - (-90.0)) < 0.001 then
+  begin
+    cosA := 0.0;
+    sinA := -1.0;
+  end
+  else if Abs(AAngleDeg - 90.0) < 0.001 then
+  begin
+    cosA := 0.0;
+    sinA := 1.0;
+  end
+  else if Abs(Abs(AAngleDeg) - 180.0) < 0.001 then
+  begin
+    cosA := -1.0;
+    sinA := 0.0;
+  end
+  else if Abs(AAngleDeg - 270.0) < 0.001 then
+  begin
+    cosA := 0.0;
+    sinA := -1.0;
+  end
+  else
+  begin
+    rad := DegToRad(AAngleDeg);
+    cosA := Cos(rad);
+    sinA := Sin(rad);
+  end;
 
   P0 := RotatePt(ARect.Left, ARect.Top);
   P1 := RotatePt(ARect.Right, ARect.Top);
@@ -449,17 +473,17 @@ begin
     V[I].ExtraParam1 := 1.0; // 1.0 = Glyph mask mode in shader
   end;
 
-  // Top-Left
-  V[0].PosX := P0.X;  V[0].PosY := P0.Y;
+  // Snap rotated vertices to integer screen pixels to prevent bilinear smearing
+  V[0].PosX := Round(P0.X);  V[0].PosY := Round(P0.Y);
   V[0].TexU := ATexRect.Left; V[0].TexV := ATexRect.Top;
   // Top-Right
-  V[1].PosX := P1.X;  V[1].PosY := P1.Y;
+  V[1].PosX := Round(P1.X);  V[1].PosY := Round(P1.Y);
   V[1].TexU := ATexRect.Right; V[1].TexV := ATexRect.Top;
   // Bottom-Right
-  V[2].PosX := P2.X;  V[2].PosY := P2.Y;
+  V[2].PosX := Round(P2.X);  V[2].PosY := Round(P2.Y);
   V[2].TexU := ATexRect.Right; V[2].TexV := ATexRect.Bottom;
   // Bottom-Left
-  V[3].PosX := P3.X;  V[3].PosY := P3.Y;
+  V[3].PosX := Round(P3.X);  V[3].PosY := Round(P3.Y);
   V[3].TexU := ATexRect.Left; V[3].TexV := ATexRect.Bottom;
 
   if CanMergeWithCurrent(gbtTexturedQuad, ATextureID, ABlendMode, AClipIndex) then
